@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createAuditLog, resolveAudit } from './src/audit.js'
+import { waitFor } from './tests-support.mjs'
 
 let failures = 0
 const check = (label, ok, detail = '') => {
@@ -22,7 +23,9 @@ const throws = (label, run, pattern) => {
 }
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dbc-audit-unit-'))
-const settle = () => new Promise(resolve => setTimeout(resolve, 60))
+/** The sink appends asynchronously; wait for the file to reach a line count. */
+const linesIn = file => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).length : 0)
+const waitForLines = (file, count) => waitFor(() => linesIn(file) >= count, { label: `${file} to hold ${count} line(s)` })
 
 // ── validation ─────────────────────────────────────────────────────────────
 check('an absent audit block disables the trail', resolveAudit(undefined, directory) === undefined)
@@ -46,7 +49,7 @@ check('the sink creates a missing directory', fs.existsSync(path.dirname(file)))
 
 log.record({ connection: 'rw', driver: 'mysql', sql: 'UPDATE t SET a = 1', ok: true, affectedRows: 1, elapsedMs: 4 })
 log.record({ connection: 'rw', driver: 'postgres', sql: `INSERT INTO t VALUES (${'x'.repeat(80)})`, ok: false, error: 'boom', elapsedMs: 9 })
-await settle()
+check('both records reached the file', await waitForLines(file, 2))
 
 const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))
 check('one line per record', lines.length === 2, String(lines.length))

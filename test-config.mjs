@@ -10,6 +10,7 @@ const RUNTIME = process.env.DSH_RUNTIME_MODULES
 const { Context } = await import(`${RUNTIME}/cordis/lib/index.js`)
 const { default: SystemPrompt, renderPrompt } = await import(`${RUNTIME}/dsh-system-prompt/lib/index.js`)
 const { default: ToolRuntime } = await import(`${RUNTIME}/dsh-tools/lib/index.js`)
+const { waitFor } = await import('./tests-support.mjs')
 const mod = await import(new URL('./index.js', import.meta.url))
 
 let failures = 0
@@ -115,7 +116,16 @@ process.env.DSH_PROFILE_DIR = scratch
 const ctx = new Context()
 ctx.plugin(SystemPrompt, {})
 ctx.plugin(ToolRuntime)
-await new Promise(r => setTimeout(r, 400))
+// Poll for readiness instead of sleeping: a fixed wait is a flake on a loaded
+// machine, and the assertion below needs the service, not a duration.
+const servicesReady = () => {
+  try {
+    return typeof ctx.systemPrompt?.assemble === 'function'
+  } catch {
+    return false
+  }
+}
+await waitFor(servicesReady, { label: 'the systemPrompt service' })
 
 const baseline = await ctx.systemPrompt.assemble({})
 check('prompt section absent before load', !renderPrompt(baseline).includes('Database connections'))
@@ -126,7 +136,8 @@ check('no db tools before load', baseline.tools.filter(t => t.name.startsWith('d
 const fiber = ctx.plugin(mod, {
   connections: [{ name: 'x', host: '127.0.0.1', port: 3306, user: 'u', password: 'p' }],
 })
-await new Promise(r => setTimeout(r, 400))
+const registered = async () => (await ctx.systemPrompt.assemble({})).tools.filter(t => t.name.startsWith('db_')).length
+check('the plugin registered its tools', await waitFor(async () => (await registered()) === 3, { label: 'three db tools' }))
 
 const during = await ctx.systemPrompt.assemble({})
 check('prompt section present after load', renderPrompt(during).includes('Database connections'))
@@ -134,7 +145,7 @@ check('three tools registered after load', during.tools.filter(t => t.name.start
   `${during.tools.filter(t => t.name.startsWith('db_')).length} tools`)
 
 await fiber.dispose()
-await new Promise(r => setTimeout(r, 400))
+check('disposal unregistered the tools', await waitFor(async () => (await registered()) === 0, { label: 'the db tools to unregister' }))
 
 const after = await ctx.systemPrompt.assemble({})
 check('prompt section removed after dispose', !renderPrompt(after).includes('Database connections'))

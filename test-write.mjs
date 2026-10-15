@@ -16,7 +16,7 @@ import { createAuditLog } from './src/audit.js'
 import { resolveConnections } from './src/config.js'
 import { LiveConnections } from './src/live.js'
 import { executeTool, queryTool } from './src/tools.js'
-import { requireMysql } from './tests-support.mjs'
+import { requireMysql, waitFor } from './tests-support.mjs'
 
 let failures = 0
 const check = (label, ok, detail = '') => {
@@ -38,8 +38,8 @@ const query = queryTool(live)
 const execute = executeTool(live)
 const call = (tool, args) => tool.execute(args, { signal: undefined })
 const textOf = value => JSON.stringify(value)
-/** The audit sink appends asynchronously; give the write a moment to land. */
-const settle = () => new Promise(resolve => setTimeout(resolve, 100))
+/** The audit sink appends asynchronously; poll the file rather than sleeping. */
+const auditLines = () => (fs.existsSync(auditFile) ? fs.readFileSync(auditFile, 'utf8').trim().split('\n').filter(Boolean) : [])
 
 const TABLE = '_dsh_rw_probe'
 
@@ -102,9 +102,9 @@ try {
   }
 
   // 9. The audit trail recorded the writes and none of the credential.
-  await settle()
+  check('the audit trail reached five records', await waitFor(() => auditLines().length >= 5, { label: 'the audit file to hold 5 records' }))
   const auditText = fs.existsSync(auditFile) ? fs.readFileSync(auditFile, 'utf8') : ''
-  const records = auditText.trim() === '' ? [] : auditText.trim().split('\n').map(line => JSON.parse(line))
+  const records = auditLines().map(line => JSON.parse(line))
   check('the audit trail has one record per write', records.length === 5, String(records.length))
   check('an audit record names the connection and the driver', records[0]?.connection === 'rw' && records[0]?.driver === 'mysql', JSON.stringify(records[0] ?? {}))
   check('a successful write is recorded as ok with its row count', records.some(record => record.ok === true && record.affectedRows === 2))

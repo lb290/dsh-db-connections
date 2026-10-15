@@ -18,6 +18,29 @@ export function skip(reason) {
 }
 
 /**
+ * Wait until a condition holds, polling instead of sleeping a fixed time.
+ *
+ * A suite that sleeps a fixed 60 ms and then asserts on an asynchronous file
+ * append passes on an idle machine and fails on a loaded one. Polling to a
+ * deadline keeps the assertion honest and makes the suite deterministic.
+ * @param {() => boolean | Promise<boolean>} predicate - the condition to wait for.
+ * @param {{ timeoutMs?: number, intervalMs?: number, label?: string }} [options] - the wait budget.
+ * @returns {Promise<boolean>} whether the condition held before the deadline.
+ */
+export async function waitFor(predicate, options = {}) {
+  const { timeoutMs = 5000, intervalMs = 20, label = 'condition' } = options
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate()) return true
+    if (Date.now() >= deadline) {
+      console.log(`      (waited ${timeoutMs} ms for ${label})`)
+      return false
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+}
+
+/**
  * Check whether something is listening on a TCP port.
  * @param {string} host - hostname or address.
  * @param {number} port - TCP port.

@@ -15,7 +15,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { skip } from './tests-support.mjs'
+import { skip, waitFor } from './tests-support.mjs'
 
 // The harness's own @deepseek-ai module directory; override with
 // DSH_RUNTIME_MODULES when your install path differs.
@@ -53,7 +53,14 @@ process.env.DSH_PROFILE_DIR = profileDir
 const ctx = new Context()
 ctx.plugin(SystemPrompt, { includeHarnessIdentity: true, persona: 'test persona' })
 ctx.plugin(ToolRuntime)
-await new Promise(resolve => setTimeout(resolve, 400))
+// Readiness is polled, never assumed from a fixed delay.
+await waitFor(() => {
+  try {
+    return typeof ctx.systemPrompt?.assemble === 'function'
+  } catch {
+    return false
+  }
+}, { label: 'the systemPrompt service' })
 
 const mod = await import(new URL('./index.js', import.meta.url))
 check('plugin name', mod.name === 'dsh-db-connections')
@@ -74,7 +81,8 @@ const fiber = ctx.plugin(mod, {
     { name: 'env', host: HOST, port: PORT, user: USER, passwordEnv: 'DBC_LOADER_NOT_SET' },
   ],
 })
-await new Promise(resolve => setTimeout(resolve, 400))
+const dbTools = async () => (await ctx.systemPrompt.assemble({})).tools.filter(tool => tool.name.startsWith('db_')).length
+check('the plugin registered its three tools', await waitFor(async () => (await dbTools()) === 3, { label: 'three db tools' }))
 
 const assembly = await ctx.systemPrompt.assemble({})
 const promptText = renderPrompt(assembly)
@@ -143,7 +151,7 @@ ctx.plugin({
     })
   },
 })
-await new Promise(resolve => setTimeout(resolve, 500))
+await waitFor(() => captured !== undefined, { label: 'the plugin API route' })
 check('plugin registered its API route', captured !== undefined && captured.path === '/api/db-connections',
   captured === undefined ? 'no route captured' : captured.path)
 if (captured === undefined) {
