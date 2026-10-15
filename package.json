@@ -1,0 +1,51 @@
+{
+  "name": "dsh-db-connections",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Named database connections for DeepSeek Harness: configure MySQL in a settings page, then refer to them by name in chat (for example \"query 128\"). Read-only by default, with writes opt-in per connection.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "locale",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "README.zh.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "database",
+    "mysql",
+    "sql"
+  ],
+  "license": "MIT",
+  "icon": "./icon.svg",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "dependencies": {
+    "mysql2": "^3.24.6",
+    "yaml": "^2.9.1"
+  }
+}

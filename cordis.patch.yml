@@ -1,0 +1,9 @@
+# dsh-db-connections bundle patch.
+#
+# 一行 insert 即挂载 Host 半身。连接在 profile 的 cordis.patch.yml 里配置，
+# 也可以直接在「设置 → 数据库连接」里改，见 README.zh.md。
+- insert:
+    - id: db-connections
+      name: 'dsh-db-connections'
+      config:
+        connections: []
