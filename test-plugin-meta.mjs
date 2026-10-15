@@ -21,6 +21,11 @@ try {
 } catch (error) {
   skip(`cannot import dsh-app-boot from ${RUNTIME} (${error.message}); set DSH_RUNTIME_MODULES to the harness's @deepseek-ai directory to run this suite`)
 }
+if (typeof readPluginMeta !== 'function') {
+  // The reader is not part of every harness build; without it there is nothing
+  // to exercise, and failing here would blame the plugin for a missing API.
+  skip(`the harness at ${RUNTIME} does not export readPluginMeta; this suite needs a build that has it (dsh 0.1.x does not)`)
+}
 
 let failures = 0
 const check = (label, ok, detail = '') => {

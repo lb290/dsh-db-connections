@@ -266,6 +266,8 @@ node test-write.mjs       # 真实 MySQL：读写模式 + 审计日志（自己�
 | `DSH_PROFILE_BASE` | `test-plugin-meta` | 装了本插件的 profile 的 `file://` 地址 |
 | `DB_TEST_HOST` / `DB_TEST_PORT` / `DB_TEST_USER` / `DB_TEST_PASSWORD` / `DB_TEST_DATABASE` | `test-integration`、`test-write` | 要测的 MySQL（默认 `127.0.0.1:3306`、`root`、空密码、`test` 库） |
 
+还没做完的验证（每个引擎仍需真库确认的假设）与有意缓做的功能，记在 [TODO.md](TODO.md)。
+
 有两个测试跑的是 harness 的**真逻辑**，不是我的复述：
 
 - `test-plugin-meta.mjs` 直接调用 harness 导出的 `readPluginMeta()`，也就是插件列表决定显示什么的那段代码。它有几条硬规矩（英文文件名必须正好是 `en.json`、必须能通过 export map 解析、所有语言文件必须和英文文件同目录、文件名必须是纯语言 id），**违反任何一条都会让整个元数据读取失败**，列表退回英文技术名。手写检查看不出这些。

@@ -96,6 +96,9 @@ const registry = new ClientModuleRegistry({
   effect: () => {},
   logger: { warn: () => {}, info: () => {} },
   reflect: { provide: () => () => {}, get: () => undefined },
+  // Older harness builds read a service through `ctx.get` in this constructor;
+  // newer ones do not. Supplying it keeps this suite portable across both.
+  get: () => undefined,
 })
 
 // The plugin is not installed into the profile yet, so resolve it from its own

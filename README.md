@@ -266,6 +266,8 @@ Environment for the suites that need more than Node:
 | `DSH_PROFILE_BASE` | `test-plugin-meta` | `file://` URL of a profile the plugin is installed into |
 | `DB_TEST_HOST` / `DB_TEST_PORT` / `DB_TEST_USER` / `DB_TEST_PASSWORD` / `DB_TEST_DATABASE` | `test-integration`, `test-write` | the MySQL to test against (defaults `127.0.0.1:3306`, `root`, empty password, `test`) |
 
+The working checklist of what still needs a live database — per-engine assumptions to confirm, and the deliberately deferred work — lives in [TODO.md](TODO.md).
+
 Two tests run the harness's **real** logic rather than a restatement of it:
 
 - `test-plugin-meta.mjs` calls the exported `readPluginMeta()`, the code that decides what the plugin list displays. It imposes hard rules (the English file must be named exactly `en.json`, it must resolve through the export map, every language file must share its directory, filenames must be bare language ids); violating any one fails the **whole** metadata read and the list silently falls back to the English technical name. A hand-written check would miss that.
