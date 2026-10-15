@@ -1,10 +1,13 @@
 # 续做清单（工作文档）
 
+> **明天从这里开始**：先读第 0 节做准备，再按第 1 节做真库验收。第 2 节是「我照文档写、没连过库」的假设清单，实测对不上时照它改。
+> 「为什么这么改」的完整推理在 [docs/review-2026-10-15.md](docs/review-2026-10-15.md)（v0.1.0 的评审快照 + 实施记录）；本文只回答「接下来做什么」。
+
 这是一份**工程续做清单**：还没做完的验证、我照文档写但没连过真库的假设、以及有意缓做的功能。
 面向用户的能力边界写在 [README.md](README.md) 的 *Known Limitations* / [README.zh.md](README.zh.md) 的「已知限制」里，这里不重复，只放可执行的待办和落点。
 
-当前分支：`feat/four-engines-and-security-hardening`（`main` 未改动）
-最近一次全量测试：**14/14 通过**，2 个需要真实 MySQL 的套件 SKIP（本机没有任何数据库）。
+当前分支：`feat/four-engines-and-security-hardening`（`main` 未改动）。
+最近一次全量测试：**14/14 通过** —— dsh 源码 checkout 与全局 `dsh@0.1.5-rc.2` 两种 harness 下都是；SKIP 的只有需要真实 MySQL 的 2 个套件（0.1.x 上多一个 `test-plugin-meta`，原因见 0.2）。
 
 ---
 
