@@ -198,18 +198,39 @@ check('dictionaries registered', dictionaries.length === 2, `${dictionaries.leng
 // ── stub the API ────────────────────────────────────────────────────────────
 const calls = []
 let stored = [
-  { name: '128', host: '192.0.2.10', port: 3306, user: 'root', password: 'change-me', database: 'appdb', description: '开发库', allowWrite: false },
+  { name: '128', host: '192.0.2.10', port: 3306, user: 'root', database: 'appdb', description: '开发库', allowWrite: false, passwordSet: true, passwordSource: 'plain' },
 ]
 const FILE = 'C:/Users/you/.dsh/profiles/desktop/cordis.patch.yml'
+const DRIVERS = [
+  { id: 'mysql', label: 'MySQL', defaultPort: 3306, maxRows: 200, readOnly: 'server' },
+  { id: 'doris', label: 'Doris', defaultPort: 9030, maxRows: 200, readOnly: 'classify' },
+  { id: 'postgres', label: 'PostgreSQL', defaultPort: 5432, maxRows: 200, readOnly: 'server' },
+  { id: 'tdengine', label: 'TDengine', defaultPort: 6041, maxRows: 50, readOnly: 'classify' },
+]
+let revision = 'rev-1'
+/** Answer the way the real API does: redacted, with a revision and the catalog. */
+const redacted = list => list.map(entry => {
+  const { password, ...rest } = entry
+  const hasPlaintext = typeof password === 'string' && password !== ''
+  const hasEnv = typeof entry.passwordEnv === 'string' && entry.passwordEnv !== ''
+  return {
+    ...rest,
+    // A stored entry keeps reporting its own state; a payload that never had
+    // the value reports what it does carry.
+    passwordSet: entry.passwordSet === true || hasPlaintext || hasEnv,
+    passwordSource: hasEnv ? 'env' : hasPlaintext || entry.passwordSource === 'plain' ? 'plain' : 'none',
+  }
+})
 globalThis.fetch = async (url, options) => {
   calls.push({ url, options, body: options?.body === undefined ? undefined : JSON.parse(options.body) })
   const reply = payload => ({ ok: true, status: 200, text: async () => JSON.stringify(payload) })
   if (url.endsWith('/test')) return reply({ reachable: true, version: '8.0.46' })
   if (options?.method === 'POST') {
     stored = JSON.parse(options.body).connections
-    return reply({ connections: stored, file: FILE })
+    revision = 'rev-2'
+    return reply({ connections: redacted(stored), revision, problems: [], drivers: DRIVERS, file: FILE })
   }
-  return reply({ connections: stored, file: FILE })
+  return reply({ connections: redacted(stored), revision, problems: [], drivers: DRIVERS, file: FILE })
 }
 
 // ── mount the page through the registered slot ──────────────────────────────
@@ -231,11 +252,17 @@ check('page left the loading state', !allText.includes('正在加载'), allText.
 check('page shows the host in an input', inputs().some(i => i.props.value === '192.0.2.10'),
   JSON.stringify(inputs().map(i => i.props.value).slice(0, 8)))
 check('page shows the connection name in an input', inputs().some(i => i.props.value === '128'))
-check('page shows the password in plain text', inputs().some(i => i.props.value === 'change-me'))
+// The API never sends a stored password, so the page can never render one.
+check('page never renders a stored password', inputs().every(i => i.props.value !== 'change-me'),
+  JSON.stringify(inputs().map(i => i.props.value)))
+check('the password input is a password field', inputs().some(i => i.props.type === 'password'))
+check('the page says a password is saved', allText.includes('已保存'), allText.slice(0, 120))
+check('page offers the engine picker', selects().some(s => (s.children ?? []).some(o => o.props.value === 'tdengine')))
 check('page shows the config file path', allText.includes('cordis.patch.yml'))
 check('page shows the plaintext notice', allText.includes('明文'))
 
-const access = selects()[0]
+const accessSelects = () => selects().filter(s => (s.children ?? []).some(o => o.props.value === 'rw'))
+const access = accessSelects()[0]
 check('access dropdown rendered', access !== undefined, `${selects().length} select(s)`)
 check('dropdown offers read-only and read-write', (access?.children ?? []).length === 2)
 check('dropdown starts at read-only', access?.props.value === 'ro', String(access?.props.value))
@@ -262,7 +289,10 @@ check('save posted to the API', post !== undefined)
 check('save sent JSON content-type', post?.options?.headers?.['content-type'] === 'application/json')
 check('payload flips the connection to writable', post?.body?.connections?.[0]?.allowWrite === true,
   JSON.stringify(post?.body?.connections?.[0]))
-check('payload keeps the plaintext password', post?.body?.connections?.[0]?.password === 'change-me')
+check('payload omits the password the page never saw', post?.body?.connections?.[0]?.password === undefined,
+  JSON.stringify(post?.body?.connections?.[0]))
+check('payload carries the revision it read', post?.body?.revision === 'rev-1', String(post?.body?.revision))
+check('payload carries the engine', post?.body?.connections?.[0]?.driver === 'mysql', String(post?.body?.connections?.[0]?.driver))
 check('payload sends the port as a number', post?.body?.connections?.[0]?.port === 3306)
 check('page reports saved', textOf(harness.tree).includes('已保存'))
 check('save is disabled again after saving', buttonNamed(harness.tree, LABEL.save)?.props.disabled === true)
@@ -281,7 +311,7 @@ await buttonNamed(harness.tree, LABEL.add).props.onClick()
 await harness.settle()
 const cards = findAll(harness.tree, n => n.type === 'div' && n.props?.className === 'dbc_card')
 check('adding creates a second card', cards.length === 2, `${cards.length} card(s)`)
-check('the added connection defaults to read-only', selects()[1]?.props.value === 'ro', String(selects()[1]?.props.value))
+check('the added connection defaults to read-only', accessSelects()[1]?.props.value === 'ro', String(accessSelects()[1]?.props.value))
 
 // Saving an incomplete entry must be refused locally, with a clear message.
 calls.length = 0

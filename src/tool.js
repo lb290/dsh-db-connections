@@ -1,5 +1,5 @@
 /**
- * Raw tool definition and argument validation.
+ * Raw tool definition, argument validation, and result rendering.
  *
  * Tools are registered as plain `ToolDefinition` objects rather than through
  * `defineTool` from `@deepseek-ai/dsh-tools`. Two reasons: a plugin loaded from
@@ -141,7 +141,6 @@ function withDefaults(parameters, args) {
  * @param {number} [options.timeoutMs] - cooperative deadline in milliseconds.
  * @param {(args: object) => boolean} [options.isConcurrencySafe] - sibling-overlap classifier.
  * @param {(args: object, exec: { signal?: AbortSignal }) => Promise<object>} options.execute - the tool body.
- * @param {(args: object) => object | undefined} [options.presentCall] - pending-state card.
  * @returns {object} the definition `ctx.tools.register()` accepts.
  */
 export function defineRawTool(options) {
@@ -158,7 +157,6 @@ export function defineRawTool(options) {
       if (violations.length > 0) throw new ToolArgsError(name, violations)
       return options.execute(withDefaults(parameters, args), exec)
     },
-    ...options.presentCall === undefined ? {} : { presentCall: options.presentCall },
   }
 }
 
@@ -172,18 +170,100 @@ export function textResult(text) {
 }
 
 /**
+ * Characters that occupy two terminal columns: CJK, fullwidth forms, and emoji.
+ *
+ * The width matters because the rendered table is read by a model that also
+ * reads the surrounding text: a column padded by code-unit count misaligns every
+ * row once a Chinese comment or a Chinese table name appears in it.
+ */
+const WIDE_CHARACTER = /[\u1100-\u115F\u2E80-\u303F\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|\p{Extended_Pictographic}/u
+
+/**
+ * Measure the printed width of one cell.
+ * @param {string} text - the cell text.
+ * @returns {number} the width in terminal columns.
+ */
+export function displayWidth(text) {
+  let width = 0
+  for (const character of text) width += WIDE_CHARACTER.test(character) ? 2 : 1
+  return width
+}
+
+/**
+ * Pad one cell to a printed width.
+ * @param {string} text - the cell text.
+ * @param {number} width - the target width.
+ * @returns {string} the padded cell.
+ */
+function padTo(text, width) {
+  const missing = width - displayWidth(text)
+  return missing > 0 ? `${text}${' '.repeat(missing)}` : text
+}
+
+/**
+ * Render one cell as text.
+ * @param {unknown} cell - a JSON-representable cell value.
+ * @returns {string} the cell text.
+ */
+function cellText(cell) {
+  if (cell === null) return 'NULL'
+  if (typeof cell === 'string') return cell
+  if (typeof cell === 'object') return JSON.stringify(cell)
+  return String(cell)
+}
+
+/**
  * Render one aligned text table from a header and rows.
  * @param {string[]} columns - column names.
  * @param {unknown[][]} rows - row cells, already JSON values.
  * @returns {string} the rendered table.
  */
 export function renderTable(columns, rows) {
-  const cells = rows.map(row => row.map(cell => (cell === null ? 'NULL' : String(cell))))
+  const cells = rows.map(row => row.map(cellText))
   const widths = columns.map((column, index) => Math.max(
-    column.length,
-    ...cells.map(row => (row[index] ?? '').length),
+    displayWidth(column),
+    ...cells.map(row => displayWidth(row[index] ?? '')),
   ))
-  const line = (values) => values.map((value, index) => value.padEnd(widths[index])).join(' | ').trimEnd()
+  const line = values => values.map((value, index) => padTo(value, widths[index])).join(' | ').trimEnd()
   const separator = widths.map(width => '-'.repeat(width)).join('-+-')
   return [line(columns), separator, ...cells.map(line)].join('\n')
+}
+
+/**
+ * Render one field for a comma-separated line.
+ * @param {string} value - the cell text.
+ * @returns {string} the quoted field when quoting is required.
+ */
+function csvCell(value) {
+  return /[",\n\r]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+}
+
+/**
+ * Render a result in one of the supported formats.
+ *
+ * `table` is the readable default; `csv` and `json` exist because a wide result
+ * costs far fewer tokens without column padding.
+ * @param {string[]} columns - column names.
+ * @param {unknown[][]} rows - row cells, already JSON values.
+ * @param {'table' | 'csv' | 'json'} format - the requested format.
+ * @returns {string} the rendered body.
+ */
+export function formatRows(columns, rows, format) {
+  if (format === 'json') return JSON.stringify({ columns, rows })
+  if (format === 'csv') {
+    return [columns.map(csvCell).join(','), ...rows.map(row => row.map(cell => csvCell(cellText(cell))).join(','))].join('\n')
+  }
+  return renderTable(columns, rows)
+}
+
+/**
+ * Bound rendered text to a character budget, cutting at a line boundary.
+ * @param {string} text - the rendered text.
+ * @param {number} maxChars - the budget.
+ * @returns {{ text: string, truncated: boolean }} the bounded text.
+ */
+export function boundText(text, maxChars) {
+  if (maxChars <= 0 || text.length <= maxChars) return { text, truncated: false }
+  const boundary = text.lastIndexOf('\n', maxChars - 1)
+  return { text: text.slice(0, boundary > maxChars * 0.6 ? boundary : maxChars), truncated: true }
 }

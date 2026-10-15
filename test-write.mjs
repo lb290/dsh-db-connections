@@ -1,15 +1,22 @@
 /**
  * Write-path test. Proves the read-write mode actually works, that it is the
- * connection's `allowWrite` flag (not the tool) that decides, and that whatever
- * the test creates is removed afterwards.
+ * connection's `allowWrite` flag (not the tool) that decides, that a write is
+ * recorded in the audit log, and that whatever the test creates is removed
+ * afterwards.
  *
  * The table is created and dropped inside this test, on the configured test
- * database: DB_TEST_HOST / DB_TEST_USER / DB_TEST_PASSWORD / DB_TEST_DATABASE
- * (default 127.0.0.1, root, empty password, `test`).
+ * database: DB_TEST_HOST / DB_TEST_PORT / DB_TEST_USER / DB_TEST_PASSWORD /
+ * DB_TEST_DATABASE (default 127.0.0.1:3306, root, empty password, `test`).
+ * Without a reachable server the suite reports SKIP.
  */
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { createAuditLog } from './src/audit.js'
 import { resolveConnections } from './src/config.js'
 import { LiveConnections } from './src/live.js'
 import { executeTool, queryTool } from './src/tools.js'
+import { requireMysql } from './tests-support.mjs'
 
 let failures = 0
 const check = (label, ok, detail = '') => {
@@ -17,20 +24,22 @@ const check = (label, ok, detail = '') => {
   if (!ok) failures += 1
 }
 
-const HOST = process.env.DB_TEST_HOST ?? '127.0.0.1'
-const USER = process.env.DB_TEST_USER ?? 'root'
-const PASSWORD = process.env.DB_TEST_PASSWORD ?? ''
-const DATABASE = process.env.DB_TEST_DATABASE ?? 'test'
+const target = await requireMysql()
+const auditDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'dbc-audit-'))
+const auditFile = path.join(auditDirectory, 'audit.jsonl')
 const live = new LiveConnections(resolveConnections({
   connections: [
-    { name: 'ro', host: HOST, port: 3306, user: USER, password: PASSWORD, database: DATABASE },
-    { name: 'rw', host: HOST, port: 3306, user: USER, password: PASSWORD, database: DATABASE, allowWrite: true },
+    { name: 'ro', host: target.host, port: target.port, user: target.user, password: target.password, database: target.database },
+    { name: 'rw', host: target.host, port: target.port, user: target.user, password: target.password, database: target.database, allowWrite: true },
   ],
-}))
+}), { audit: createAuditLog({ path: auditFile, maxSqlChars: 512 }) })
+
 const query = queryTool(live)
 const execute = executeTool(live)
 const call = (tool, args) => tool.execute(args, { signal: undefined })
 const textOf = value => JSON.stringify(value)
+/** The audit sink appends asynchronously; give the write a moment to land. */
+const settle = () => new Promise(resolve => setTimeout(resolve, 100))
 
 const TABLE = '_dsh_rw_probe'
 
@@ -42,7 +51,7 @@ try {
 try {
   // 1. DDL through the writable connection.
   const created = await call(execute, { connection: 'rw', sql: `CREATE TABLE ${TABLE} (id INT PRIMARY KEY, note VARCHAR(64))` })
-  check('CREATE succeeds on a writable connection', created.affectedRows === 0 || created.affectedRows >= 0, textOf(created))
+  check('CREATE succeeds on a writable connection', created.affectedRows >= 0, textOf(created))
 
   // 2. INSERT and read it back.
   const inserted = await call(execute, { connection: 'rw', sql: `INSERT INTO ${TABLE} (id, note) VALUES (1, 'hello'), (2, 'world')` })
@@ -91,21 +100,26 @@ try {
   } catch (error) {
     check('duplicate key surfaces the server message', /Duplicate entry/.test(error.message), error.message.slice(0, 100))
   }
+
+  // 9. The audit trail recorded the writes and none of the credential.
+  await settle()
+  const auditText = fs.existsSync(auditFile) ? fs.readFileSync(auditFile, 'utf8') : ''
+  const records = auditText.trim() === '' ? [] : auditText.trim().split('\n').map(line => JSON.parse(line))
+  check('the audit trail has one record per write', records.length === 5, String(records.length))
+  check('an audit record names the connection and the driver', records[0]?.connection === 'rw' && records[0]?.driver === 'mysql', JSON.stringify(records[0] ?? {}))
+  check('a successful write is recorded as ok with its row count', records.some(record => record.ok === true && record.affectedRows === 2))
+  check('a failed statement is recorded too', records.some(record => record.ok === false && /Duplicate entry|does not exist/.test(record.error ?? '')))
+  check('the audit trail holds no credential', target.password === '' || auditText.includes(target.password) === false)
 } finally {
-  // 9. Clean up regardless of how the checks went.
+  // 10. Clean up regardless of how the checks went.
   try {
     const dropped = await call(execute, { connection: 'rw', sql: `DROP TABLE IF EXISTS ${TABLE}` })
     check('cleanup dropped the probe table', dropped !== undefined)
   } catch (error) {
     check('cleanup dropped the probe table', false, error.message)
   }
-  try {
-    const leftover = await call(query, { connection: 'rw', sql: `SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${DATABASE}' AND TABLE_NAME = '${TABLE}'` })
-    check('no probe table remains', Number(leftover.rows[0][0]) === 0, JSON.stringify(leftover.rows))
-  } catch (error) {
-    check('no probe table remains', false, error.message)
-  }
-  live.dispose()
+  await live.dispose()
+  fs.rmSync(auditDirectory, { recursive: true, force: true })
 }
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)

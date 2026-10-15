@@ -1,16 +1,18 @@
 /**
  * dsh-db-connections — named database connections for DeepSeek Harness.
  *
- * A deployment lists its databases, each with a short name. This plugin then
- * contributes three things on that basis:
+ * A deployment lists its databases, each with a short name and an engine
+ * (MySQL, Doris, PostgreSQL, or TDengine). This plugin then contributes four
+ * things on that basis:
  *
  * 1. A system-prompt section naming every connection, so "use 128" resolves
  *    without the user restating the host or credentials. The section never
- *    contains a password.
+ *    contains a password and never contains an address.
  * 2. `db_query`, `db_execute`, and `db_schema` tools that take one of those
  *    names as their `connection` argument.
  * 3. A settings page, served over the plugin's own HTTP routes, that edits the
  *    same connection list and applies it without a restart.
+ * 4. An optional JSONL audit trail for every writing statement.
  *
  * The connection list is therefore live rather than captured at load: the
  * prompt section is a function of the current list, the tools read the current
@@ -25,10 +27,14 @@
  * @module dsh-db-connections
  */
 
-import { resolveConnections } from './src/config.js'
+import path from 'node:path'
 import { createApiHandler } from './src/api.js'
+import { createAuditLog, resolveAudit } from './src/audit.js'
+import { resolveConnections } from './src/config.js'
+import { driverChoices } from './src/drivers/index.js'
 import { LiveConnections } from './src/live.js'
 import { renderConnections } from './src/prompt.js'
+import { mergePasswords } from './src/settings.js'
 import { ConnectionStore } from './src/store.js'
 import { executeTool, queryTool, schemaTool } from './src/tools.js'
 
@@ -43,8 +49,22 @@ export const CONNECTIONS_SECTION = 'db-connections:connections'
 const CONNECTIONS_ORDER = 150
 
 /**
+ * Report one fact through the harness logger when the composition has one.
+ * Logging must never be the reason a load fails.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - the plugin context.
+ * @param {string} message - the line to log.
+ */
+function report(ctx, message) {
+  try {
+    ctx.logger?.warn?.(message)
+  } catch {
+    // A composition without a logger simply does not get the line.
+  }
+}
+
+/**
  * Load the configured connections and publish the prompt section, the tools,
- * and the settings API.
+ * the settings API, and the audit sink.
  * @param {import('@deepseek-ai/cordis').Context} ctx - the plugin context.
  * @param {unknown} config - the raw `config` block from the loader row.
  */
@@ -56,11 +76,28 @@ export function apply(ctx, config) {
   // instead of being flattened into the resolved plaintext password.
   const mountedRaw = Array.isArray(config?.connections) ? config.connections : []
   const store = new ConnectionStore()
-  const live = new LiveConnections(mounted)
 
-  // Pools own sockets; closing them is this plugin's responsibility, and the
+  // An audit trail is opt-in; a path that cannot be created costs the trail, not
+  // the plugin, because a load failure here would also remove the settings page
+  // that reports it.
+  let audit
+  try {
+    const settings = resolveAudit(config?.audit, path.dirname(store.file))
+    if (settings !== undefined) audit = createAuditLog(settings)
+  } catch (error) {
+    report(ctx, `dsh-db-connections: the audit trail is disabled (${error instanceof Error ? error.message : String(error)})`)
+  }
+
+  const live = new LiveConnections(mounted, audit === undefined ? {} : { audit })
+  for (const problem of mounted.problems) {
+    report(ctx, `dsh-db-connections: connection ${JSON.stringify(problem.connection)} is not usable in this environment (${problem.message})`)
+  }
+
+  // Drivers own sockets; closing them is this plugin's responsibility, and the
   // effect disposer runs on unload or hot replacement.
-  ctx.effect(() => () => live.dispose())
+  ctx.effect(() => () => {
+    void live.dispose()
+  })
 
   // The section re-renders per assembly, so a settings save reaches the model
   // on the next turn without reloading the plugin.
@@ -83,25 +120,33 @@ export function apply(ctx, config) {
    *
    * Order matters: an invalid list throws before anything is written, and a
    * write failure leaves the running list untouched, so the file and the live
-   * state never disagree.
+   * state never disagree. Credentials the page never saw are carried over from
+   * the stored entries, so an untouched password survives a save.
    * @param {object[]} raw - the raw connection entries from the settings page.
+   * @param {string} [revision] - the patch revision the page read, when it sent one.
    * @returns {Promise<object[]>} the raw entries now in effect.
    */
-  async function replace(raw) {
-    const normalized = resolveConnections({ connections: raw })
-    store.save(raw)
-    live.swap(normalized)
-    return raw
+  async function replace(raw, revision) {
+    const stored = store.read(mountedRaw).connections
+    const merged = mergePasswords(raw, stored)
+    const resolved = resolveConnections({ connections: merged })
+    store.save(merged, revision)
+    await live.swap(resolved)
+    return merged
   }
 
   ctx.inject(['webServer'], (serverCtx) => {
     const handler = createApiHandler({
-      list: () => store.load(mountedRaw),
+      list: () => {
+        const current = store.read(mountedRaw)
+        return { connections: current.connections, revision: current.revision, problems: live.problems }
+      },
       replace,
+      drivers: driverChoices,
       file: store.file,
       test: async (name) => {
-        // Resolve through the live registry first so an unknown name reports
-        // the configured list instead of a connection error.
+        // Resolve through the live registry first so an unknown or unusable name
+        // reports that reason instead of a connection error.
         live.registry.get(name)
         return live.registry.ping(name)
       },

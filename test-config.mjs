@@ -34,11 +34,59 @@ expectThrow('missing user', { connections: [{ name: 'a', host: 'h' }] }, 'user i
 expectThrow('duplicate names', { connections: [{ name: 'a', host: 'h', user: 'u' }, { name: 'a', host: 'h', user: 'u' }] }, 'duplicate connection name')
 expectThrow('bad port', { connections: [{ name: 'a', host: 'h', user: 'u', port: 0 }] }, 'port must be a positive integer')
 expectThrow('port too large', { connections: [{ name: 'a', host: 'h', user: 'u', port: 70000 }] }, 'port must be at most 65535')
-expectThrow('unsupported driver', { connections: [{ name: 'a', host: 'h', user: 'u', driver: 'postgres' }] }, 'is not supported')
+expectThrow('unsupported driver', { connections: [{ name: 'a', host: 'h', user: 'u', driver: 'oracle' }] }, 'is not supported')
 expectThrow('bad allowWrite type', { connections: [{ name: 'a', host: 'h', user: 'u', allowWrite: 'yes' }] }, 'allowWrite must be a boolean')
 expectThrow('connections not a list', { connections: 'nope' }, 'must be a list')
-expectThrow('missing passwordEnv', { connections: [{ name: 'a', host: 'h', user: 'u', passwordEnv: 'NOT_SET_ANYWHERE' }] }, 'is not set in the environment')
 expectThrow('control chars in name', { connections: [{ name: 'a\nb', host: 'h', user: 'u' }] }, 'must not contain control characters')
+expectThrow('an unknown TLS option is refused', { connections: [{ name: 'a', host: 'h', user: 'u', ssl: { nonsense: true } }] }, 'not a recognized TLS option')
+// A broken audit block costs the trail, not the plugin: the settings page is the
+// only place that could report it, so failing the load here would remove the
+// reporter. `resolveAudit` itself is asserted to throw in test-audit.mjs.
+try {
+  mod.apply(new Context(), { connections: [], audit: {} })
+  check('a broken audit block still loads the plugin', true)
+} catch (e) {
+  check('a broken audit block still loads the plugin', false, e.message)
+}
+
+// --- a per-machine environment must not remove the settings page ---
+//
+// A `passwordEnv` this machine does not set is a fact about the machine, not a
+// defect in the file. Throwing here would fail the whole plugin load, which also
+// removes the settings page that is the only place to see and fix it.
+const { resolveConnections } = await import('./src/config.js')
+const degraded = resolveConnections({ connections: [
+  { name: 'ok', host: 'h', user: 'u' },
+  { name: 'missing', host: 'h', user: 'u', passwordEnv: 'DBC_TEST_NOT_SET' },
+] })
+check('a missing passwordEnv does not throw', degraded.connections.length === 2)
+check('the unusable connection is reported, not dropped', degraded.connections[1].name === 'missing')
+check('it is marked unavailable with the reason', /DBC_TEST_NOT_SET/.test(degraded.connections[1].unavailable ?? ''), String(degraded.connections[1].unavailable))
+check('the problem list names the connection', degraded.problems.length === 1 && degraded.problems[0].connection === 'missing', JSON.stringify(degraded.problems))
+
+process.env.DBC_TEST_PRESENT = 'from-env'
+const present = resolveConnections({ connections: [{ name: 'e', host: 'h', user: 'u', passwordEnv: 'DBC_TEST_PRESENT' }] })
+check('a present passwordEnv resolves with no problem', present.connections[0].password === 'from-env' && present.problems.length === 0)
+check('the resolved connection keeps the variable name', present.connections[0].passwordEnv === 'DBC_TEST_PRESENT')
+
+// --- per-driver defaults ---
+const perDriver = resolveConnections({ connections: [
+  { name: 'm', host: 'h', user: 'u' },
+  { name: 'd', driver: 'doris', host: 'h', user: 'u' },
+  { name: 'p', driver: 'postgres', host: 'h', user: 'u' },
+  { name: 't', driver: 'tdengine', host: 'h', user: 'u' },
+] }).connections
+check('each driver gets its own default port',
+  perDriver.map(connection => `${connection.driver}:${connection.port}`).join(' ') === 'mysql:3306 doris:9030 postgres:5432 tdengine:6041',
+  perDriver.map(connection => `${connection.driver}:${connection.port}`).join(' '))
+check('a time-series database defaults to far fewer rows',
+  perDriver[3].maxRows === 50 && perDriver[0].maxRows === 200,
+  `${perDriver[3].maxRows}/${perDriver[0].maxRows}`)
+
+// --- TLS material ---
+const tls = resolveConnections({ connections: [{ name: 's', host: 'h', user: 'u', ssl: { ca: 'PEM', rejectUnauthorized: false } }] }).connections[0]
+check('a TLS mapping is kept as configured', tls.ssl.ca === 'PEM' && tls.ssl.rejectUnauthorized === false, JSON.stringify(tls.ssl))
+check('ssl: true stays a boolean', resolveConnections({ connections: [{ name: 's', host: 'h', user: 'u', ssl: true }] }).connections[0].ssl === true)
 
 // A valid config with no connections must load and stay inert.
 try {

@@ -11,6 +11,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { skip } from './tests-support.mjs'
 
 // Machine locations, overridable by environment when your install differs:
 // DSH_RUNTIME_MODULES = the harness's own @deepseek-ai module directory,
@@ -81,7 +82,13 @@ if (!fs.existsSync(PROFILE_DIR)) {
   process.exit(failures === 0 ? 0 : 1)
 }
 
-const { ClientModuleRegistry } = await import(`${RUNTIME}/dsh-client-modules/lib/index.js`)
+const { ClientModuleRegistry } = await (async () => {
+  try {
+    return await import(`${RUNTIME}/dsh-client-modules/lib/index.js`)
+  } catch (error) {
+    skip(`cannot import dsh-client-modules from ${RUNTIME} (${error.message}); set DSH_RUNTIME_MODULES to the harness's @deepseek-ai directory to run the live discovery check`)
+  }
+})()
 const registry = new ClientModuleRegistry({
   loader: { entries: () => [] },
   on: () => () => {},

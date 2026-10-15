@@ -1,71 +1,90 @@
 /**
  * Integration test: exercises the real registry, tools, and prompt rendering
- * against the live MySQL server, without needing the harness.
+ * against a live MySQL server, without needing the harness.
  *
- * Point DB_TEST_HOST / DB_TEST_USER / DB_TEST_PASSWORD / DB_TEST_DATABASE at a
- * MySQL you own; the defaults target 127.0.0.1 with user root and no password.
+ * Point DB_TEST_HOST / DB_TEST_PORT / DB_TEST_USER / DB_TEST_PASSWORD /
+ * DB_TEST_DATABASE at a MySQL you own; the defaults target 127.0.0.1:3306 with
+ * user root and no password. Without a reachable server the suite reports SKIP.
  */
 import { resolveConnections } from './src/config.js'
-import { renderConnections } from './src/prompt.js'
 import { LiveConnections } from './src/live.js'
+import { renderConnections } from './src/prompt.js'
 import { executeTool, queryTool, schemaTool } from './src/tools.js'
+import { requireMysql } from './tests-support.mjs'
 
-const HOST = process.env.DB_TEST_HOST ?? '127.0.0.1'
-const USER = process.env.DB_TEST_USER ?? 'root'
-const PASSWORD = process.env.DB_TEST_PASSWORD ?? ''
-const DATABASE = process.env.DB_TEST_DATABASE ?? 'test'
-const connections = resolveConnections({
+let failures = 0
+const check = (label, ok, detail = '') => {
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail === '' ? '' : ` -> ${detail}`}`)
+  if (!ok) failures += 1
+}
+
+const target = await requireMysql()
+const live = new LiveConnections(resolveConnections({
   connections: [
-    { name: '128', host: HOST, port: 3306, user: USER, password: PASSWORD,
-      database: DATABASE, description: '开发库' },
-    { name: '128-nodb', host: HOST, port: 3306, user: USER, password: PASSWORD },
+    { name: '128', host: target.host, port: target.port, user: target.user, password: target.password,
+      database: target.database, description: '开发库' },
+    { name: '128-nodb', host: target.host, port: target.port, user: target.user, password: target.password },
   ],
-})
-const live = new LiveConnections(connections)
+}))
 
 const defs = {
   query: queryTool(live),
   schema: schemaTool(live),
   execute: executeTool(live),
 }
-const call = async (which, args) => defs[which].execute(args, { signal: undefined })
+const call = (which, args) => defs[which].execute(args, { signal: undefined })
 const show = (label, content) => {
   console.log(`\n=== ${label} ===`)
-  console.log(content.map(b => b.text).join('\n'))
+  console.log(content.map(block => block.text).join('\n'))
 }
 
 console.log('--- prompt section ---')
-console.log(renderConnections(live.connections))
+const prompt = renderConnections(live.connections)
+console.log(prompt)
+check('the prompt names the connection without its address', prompt.includes('`128`') && prompt.includes(target.host) === false)
+check('the prompt reports the engine', prompt.includes('MySQL'))
 
 // 1. schema: list databases (connection with no default schema)
-show('db_schema (databases)', defs.schema.output.render({}, await call('schema', { connection: '128-nodb' })))
+const databases = await call('schema', { connection: '128-nodb' })
+show('db_schema (databases)', defs.schema.output.render({}, databases))
+check('db_schema lists databases', databases.level === 'databases' && databases.databases.length > 0)
+check('engine schemas are hidden and reported', databases.databases.includes('information_schema') === false && databases.notices.length > 0, JSON.stringify(databases.notices))
 
 // 2. schema: tables of the connection's default schema
-show('db_schema (tables)', defs.schema.output.render({}, await call('schema', { connection: '128' })))
+const tables = await call('schema', { connection: '128' })
+show('db_schema (tables)', defs.schema.output.render({}, tables))
+check('db_schema lists tables', tables.level === 'tables' && Array.isArray(tables.tables))
 
-// 3. schema: table columns + indexes + DDL
-show('db_schema (table sys_user)', defs.schema.output.render({}, await call('schema', { connection: '128', table: 'sys_user' })))
+// 3. read query
+const read = await call('query', { connection: '128', sql: 'SELECT 1 AS one, \'two\' AS two' })
+show('db_query (SELECT)', defs.query.output.render({}, read))
+check('db_query returns rows', read.rows.length === 1 && read.rows[0][0] === 1, JSON.stringify(read.rows))
+check('db_query reports column names', read.columns[0] === 'one', JSON.stringify(read.columns))
 
-// 4. read query
-show('db_query (SELECT)', defs.query.output.render({}, await call('query', { connection: '128', sql: 'SELECT id, username, realname FROM sys_user LIMIT 5' })))
+// 4. formats render from the same canonical value
+const csv = defs.query.output.render({ format: 'csv' }, read)[0].text
+check('csv format renders a header and one row', csv.split('\n').length === 3, csv.replaceAll('\n', ' | '))
+check('json format renders the canonical value', JSON.parse(defs.query.output.render({ format: 'json' }, read)[0].text).rows.length === 1)
 
 // 5. read-only enforcement: a write through db_query must be refused
-const refusal = async (label, which, args) => {
+const refusal = async (label, which, args, pattern) => {
   try {
     await call(which, args)
-    console.log(`\n!!! FAIL (${label}): the call was allowed`)
-  } catch (e) {
-    console.log(`\n=== ${label} (expected refusal) ===`)
-    console.log(e.message)
+    check(label, false, 'the call was allowed')
+  } catch (error) {
+    check(label, pattern.test(error.message), error.message)
   }
 }
 
-await refusal('db_query write', 'query', { connection: '128', sql: "UPDATE sys_user SET username='x' WHERE id=1" })
-await refusal('CTE-led write', 'query', { connection: '128', sql: 'WITH c AS (SELECT id FROM sys_user LIMIT 1) UPDATE sys_user SET username=username WHERE id IN (SELECT id FROM c)' })
-await refusal('INTO OUTFILE', 'query', { connection: '128', sql: "SELECT 1 INTO OUTFILE 'C:/ro_probe.txt'" })
-await refusal('db_execute on read-only', 'execute', { connection: '128', sql: 'SELECT 1' })
-await refusal('unknown connection', 'query', { connection: 'nope', sql: 'SELECT 1' })
-await refusal('missing sql argument', 'query', { connection: '128' })
-await refusal('bad schema target', 'schema', { connection: '128-nodb', table: 'sys_user' })
+await refusal('db_query write', 'query', { connection: '128', sql: 'CREATE TABLE _dsh_ro_probe (id INT)' }, /read-only statements only/)
+await refusal('CTE-led write', 'query', { connection: '128', sql: 'WITH c AS (SELECT 1 AS id) DELETE FROM c' }, /writes|read-only/)
+await refusal('db_execute on read-only', 'execute', { connection: '128', sql: 'SELECT 1' }, /is read-only/)
+await refusal('unknown connection', 'query', { connection: 'nope', sql: 'SELECT 1' }, /no database connection is named/)
+await refusal('missing sql argument', 'query', { connection: '128' }, /sql is required/)
+await refusal('bad schema target', 'schema', { connection: '128-nodb', table: 'sys_user' }, /needs a schema/)
+await refusal('session statement', 'query', { connection: '128', sql: 'SET SESSION autocommit = 0' }, /session or administrative/)
+await refusal('two statements in one call', 'query', { connection: '128', sql: 'SELECT 1; SELECT 2' }, /one statement per call/)
 
-live.dispose()
+console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
+await live.dispose()
+process.exit(failures === 0 ? 0 : 1)

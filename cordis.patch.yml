@@ -2,6 +2,12 @@
 #
 # 一行 insert 即挂载 Host 半身。连接在 profile 的 cordis.patch.yml 里配置，
 # 也可以直接在「设置 → 数据库连接」里改，见 README.zh.md。
+#
+# 每个连接用 driver 选引擎：mysql（默认）/ doris / postgres / tdengine。
+# 可选的 audit.path 会把每次写操作记进 JSONL，例如：
+#   config:
+#     audit: { path: .dsh-db/audit.jsonl }
+#     connections: []
 - insert:
     - id: db-connections
       name: 'dsh-db-connections'

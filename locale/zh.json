@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "数据库连接",
-    "description": "为 DeepSeek Harness 提供命名数据库连接：在设置页里配好 MySQL，之后在对话里直接用连接名（例如「用 128 查一下」）。默认只读，可逐个连接开启读写。"
+    "description": "为 DeepSeek Harness 提供命名数据库连接：在设置页里配好 MySQL、Doris、PostgreSQL、TDengine，之后在对话里直接用连接名（例如「用 128 查一下」）。默认只读，可逐个连接开启读写。"
   }
 }

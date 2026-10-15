@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Databases",
-    "description": "Named database connections for DeepSeek Harness: configure MySQL in a settings page, then refer to them by name in chat (for example \"query 128\"). Read-only by default, with writes opt-in per connection."
+    "description": "Named database connections for DeepSeek Harness: configure MySQL, Doris, PostgreSQL, and TDengine in a settings page, then refer to them by name in chat (for example \"query 128\"). Read-only by default, with writes opt-in per connection."
   }
 }

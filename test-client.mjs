@@ -162,20 +162,38 @@ const { toPayload, toEditor, validate, BLANK } = exports.__test
 const asStrings = {
   ...BLANK,
   name: ' 128 ', host: ' 192.0.2.10 ', port: '3306', user: ' root ',
-  password: 'change-me', database: ' appdb ', description: ' 开发库 ',
+  passwordDraft: 'change-me', database: ' appdb ', description: ' 开发库 ',
   allowWrite: true, ssl: false,
   connectTimeoutMs: '10000', queryTimeoutMs: '30000', maxRows: '200',
-  maxCellChars: '500', maxDdlChars: '20000', connectionLimit: '4',
+  maxCellChars: '500', maxDdlChars: '20000', maxResultChars: '32000', connectionLimit: '4',
 }
 const payload = toPayload(asStrings)
 check('payload trims the name', payload.name === '128', JSON.stringify(payload.name))
 check('payload trims host and user', payload.host === '192.0.2.10' && payload.user === 'root')
-check('payload keeps the password verbatim', payload.password === 'change-me')
+check('payload sends a typed password verbatim', payload.password === 'change-me')
 check('payload sends numbers as numbers', payload.port === 3306 && payload.maxRows === 200 && typeof payload.port === 'number')
 check('payload carries allowWrite', payload.allowWrite === true)
+check('payload carries the engine', payload.driver === 'mysql', String(payload.driver))
 check('payload trims description', payload.description === '开发库')
 check('payload drops empty optional fields', !('database' in toPayload({ ...asStrings, database: '  ' })))
 check('payload omits description when blank', !('description' in toPayload({ ...asStrings, description: '' })))
+
+// The page never receives a stored password, so an untouched field must send
+// nothing at all — that absence is what tells the server to keep the value.
+const untouched = toPayload({ ...asStrings, passwordDraft: undefined, passwordSet: true })
+check('payload omits an untouched password', !('password' in untouched), JSON.stringify(untouched))
+check('payload still reports the source as plaintext', untouched.passwordEnv === '', JSON.stringify(untouched.passwordEnv))
+check('payload sends a cleared password explicitly', toPayload({ ...asStrings, passwordDraft: '' }).password === '')
+
+// The environment indirection is the whole point of the mode, so it survives —
+// and it clears any stored plaintext, which is the reason to choose it.
+const envEntry = toPayload({ ...asStrings, passwordMode: 'env', passwordEnvDraft: ' WAREHOUSE_PW ', passwordDraft: undefined })
+check('an environment entry sends the variable name and clears plaintext',
+  envEntry.passwordEnv === 'WAREHOUSE_PW' && envEntry.password === '', JSON.stringify(envEntry))
+
+// An engine with a different port must not inherit the MySQL one.
+const tdPayload = toPayload({ ...asStrings, driver: 'tdengine', port: '', maxRows: '' })
+check('blank fields fall back to the engine defaults', tdPayload.port === 6041 && tdPayload.maxRows === 50, JSON.stringify({ port: tdPayload.port, rows: tdPayload.maxRows }))
 
 // A blank numeric field must fall back to the default, never become NaN.
 const blankNumbers = toPayload({ ...asStrings, port: '', maxRows: '', connectionLimit: '' })
@@ -185,13 +203,28 @@ check('blank numeric fields use defaults',
 check('no payload field is NaN',
   Object.entries(blankNumbers).every(([, value]) => typeof value !== 'number' || Number.isFinite(value)))
 
+// --- TLS shaping ---
+check('TLS off sends false', toPayload({ ...asStrings, sslMode: 'off' }).ssl === false)
+check('TLS on sends true', toPayload({ ...asStrings, sslMode: 'on' }).ssl === true)
+check('TLS on with a CA sends the certificate', toPayload({ ...asStrings, sslMode: 'on', sslCa: ' PEM ' }).ssl.ca === 'PEM')
+check('the unverified mode says so', toPayload({ ...asStrings, sslMode: 'insecure' }).ssl.rejectUnauthorized === false)
+
 // --- round trip: a stored entry, through the editor and back ---
-const stored = { name: '128', host: 'h', user: 'u', password: 'p', allowWrite: true, port: 3306 }
-const editor = toEditor(stored)
+// The API hands the page a redacted entry, so the editor never holds the value.
+const stored = { name: '128', host: 'h', user: 'u', passwordSet: true, passwordSource: 'plain', allowWrite: true, port: 3306 }
+const editor = toEditor(stored, 'k1')
 check('editor keeps stored values', editor.name === '128' && editor.allowWrite === true)
-check('editor renders numbers as strings for inputs', editor.port === 3306 || editor.port === '3306', String(editor.port))
+check('editor keeps the key it was given', editor.key === 'k1')
+check('editor holds no password value', editor.passwordDraft === undefined)
+check('editor reports that a password is set', editor.passwordSet === true)
+check('editor renders numbers for inputs', editor.port === 3306 || editor.port === '3306', String(editor.port))
 check('round trip preserves allowWrite', toPayload(editor).allowWrite === true)
-check('editor fills defaults for an absent entry', toEditor({ name: 'x', host: 'h', user: 'u' }).maxRows === 200)
+check('round trip sends no password for an untouched entry', !('password' in toPayload(editor)))
+check('an environment entry reopens in environment mode',
+  toEditor({ name: 'e', host: 'h', user: 'u', passwordSet: true, passwordSource: 'env', passwordEnv: 'V' }, 'k2').passwordMode === 'env')
+check('editor fills defaults for an absent entry', String(toEditor({ name: 'x', host: 'h', user: 'u' }, 'k3').maxRows) === '200')
+check('editor defaults a TDengine entry to its own row cap', String(toEditor({ name: 't', driver: 'tdengine', host: 'h', user: 'u' }, 'k4').maxRows) === '50')
+check('editor defaults a Doris entry to its own port', String(toEditor({ name: 'd', driver: 'doris', host: 'h', user: 'u' }, 'k5').port) === '9030')
 
 // --- validation ---
 const t = key => key

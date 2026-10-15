@@ -2,20 +2,27 @@
  * The settings API served to the plugin's own browser half.
  *
  * Routes live under one prefix and are dispatched here, so the browser half has
- * a single place to talk to. Two checks guard every mutating request, because
- * this API writes database credentials to disk:
+ * a single place to talk to. Three rules shape every route, because this API
+ * reads and writes database credentials:
  *
- * 1. `Content-Type: application/json` is required on writes. A cross-origin
- *    `fetch` with that type is not a simple request, so a browser must preflight
- *    it, and this server answers no preflight — a hostile page cannot reach the
- *    write path.
- * 2. A present `Origin` must match the request's own `Host`. A same-origin
- *    request from the settings page always matches.
+ * 1. **A response never carries a password.** The stored entries are redacted on
+ *    the way out: the page learns whether a credential is set and where it comes
+ *    from, never its value. A request that omits `password` therefore means "keep
+ *    the stored one", which is what makes the redacted form sufficient.
+ * 2. `Content-Type: application/json` is required on writes, and a present
+ *    `Origin` must match the request's own `Host`. A cross-origin write is not a
+ *    simple request, so a browser must preflight it, and this server answers no
+ *    preflight.
+ * 3. A write may carry the `revision` it read. When it does and the file has
+ *    moved on, the write is refused with 409 rather than overwriting whatever
+ *    the CLI or another plugin wrote in between.
  *
  * @module dsh-db-connections/api
  */
 
 import { ConfigError } from './config.js'
+import { redactConnections } from './settings.js'
+import { StoreConflictError } from './store.js'
 
 /** Longest request body accepted, in bytes. Generous for a connection list. */
 const MAX_BODY_BYTES = 256 * 1024
@@ -76,6 +83,18 @@ function originAllowed(req) {
 }
 
 /**
+ * Require the JSON content type a browser cannot send cross-origin without a preflight.
+ * @param {import('node:http').IncomingMessage} req - the request.
+ * @throws {RequestError} when the content type is missing or wrong.
+ */
+function requireJsonContentType(req) {
+  const contentType = String(req.headers['content-type'] ?? '')
+  if (contentType.toLowerCase().startsWith('application/json') === false) {
+    throw new RequestError(415, 'writes must send Content-Type: application/json')
+  }
+}
+
+/**
  * Write one JSON response.
  * @param {import('node:http').ServerResponse} res - the response.
  * @param {number} status - HTTP status.
@@ -86,7 +105,7 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': String(body.length),
-    // The payload carries credentials and schema facts; never let anything cache it.
+    // The payload carries structure and configuration facts; never let anything cache it.
     'cache-control': 'no-store',
   })
   res.end(body)
@@ -98,48 +117,61 @@ function sendJson(res, status, payload) {
  * The handler owns the complete request lifecycle, so it always ends the
  * response — including on a thrown error.
  * @param {object} deps - the collaborators this API drives.
- * @param {() => object[]} deps.list - raw configured connection entries.
- * @param {(connections: object[]) => Promise<object[]>} deps.replace - validate, persist, and apply a new list.
+ * @param {() => { connections: object[], revision: string, problems: object[] }} deps.list - raw stored entries, the file revision, and this environment's problems.
+ * @param {(connections: object[], revision: string) => Promise<object[]>} deps.replace - validate, persist, and apply a new list.
  * @param {(name: string) => Promise<object>} deps.test - probe one saved connection.
+ * @param {() => object[]} deps.drivers - the driver picker's choices.
  * @param {string} deps.file - the patch file path, reported so the UI can show it.
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>} the handler.
  */
-export function createApiHandler({ list, replace, test, file }) {
+export function createApiHandler({ list, replace, test, drivers, file }) {
+  /**
+   * The shape both the read and the write answer with.
+   * @param {{ connections: object[], revision: string, problems: object[] }} current - one read of the store.
+   * @returns {object} the response payload.
+   */
+  function payload(current) {
+    return {
+      connections: redactConnections(current.connections),
+      revision: current.revision,
+      problems: current.problems,
+      drivers: drivers(),
+      file,
+    }
+  }
+
   return async function handle(req, res) {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const route = url.pathname
       const method = req.method ?? 'GET'
 
-      if (route === '/api/db-connections' && method === 'GET') {
-        sendJson(res, 200, { connections: list(), file })
-        return
-      }
-
-      if (!originAllowed(req)) {
+      if (originAllowed(req) === false) {
         throw new RequestError(403, 'this API only answers same-origin requests')
       }
 
+      if (route === '/api/db-connections' && method === 'GET') {
+        sendJson(res, 200, payload(list()))
+        return
+      }
+
       if (route === '/api/db-connections' && method === 'POST') {
-        const contentType = String(req.headers['content-type'] ?? '')
-        if (!contentType.toLowerCase().startsWith('application/json')) {
-          throw new RequestError(415, 'writes must send Content-Type: application/json')
-        }
+        requireJsonContentType(req)
         const body = await readJson(req)
         const connections = body?.connections
         if (!Array.isArray(connections)) {
           throw new RequestError(400, 'the request body must carry a connections list')
         }
-        const saved = await replace(connections)
-        sendJson(res, 200, { connections: saved, file })
+        const revision = typeof body?.revision === 'string' && body.revision !== '' ? body.revision : undefined
+        await replace(connections, revision)
+        // The answer is the state that is now in effect, read back from the store
+        // rather than echoed, so the page's next revision is the file's own.
+        sendJson(res, 200, payload(list()))
         return
       }
 
       if (route === '/api/db-connections/test' && method === 'POST') {
-        const contentType = String(req.headers['content-type'] ?? '')
-        if (!contentType.toLowerCase().startsWith('application/json')) {
-          throw new RequestError(415, 'writes must send Content-Type: application/json')
-        }
+        requireJsonContentType(req)
         const body = await readJson(req)
         if (typeof body?.name !== 'string' || body.name === '') {
           throw new RequestError(400, 'the request body must carry a connection name')
@@ -156,7 +188,9 @@ export function createApiHandler({ list, replace, test, file }) {
       }
       const status = error instanceof RequestError
         ? error.status
-        : error instanceof ConfigError ? 400 : 500
+        : error instanceof ConfigError ? 400
+          : error instanceof StoreConflictError ? 409
+            : 500
       sendJson(res, status, { error: error instanceof Error ? error.message : String(error) })
     }
   }

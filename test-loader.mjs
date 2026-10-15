@@ -1,7 +1,12 @@
 /**
  * Load the plugin through the REAL DSH loader stack (Cordis + real
  * SystemPrompt/ToolRuntime services), then exercise the registered tools, the
- * assembled system prompt, and a live connection swap.
+ * assembled system prompt, the read-only policy per engine, the plugin's own
+ * settings route, and a live connection swap.
+ *
+ * No database is needed: every check here is about what the plugin decides
+ * before a socket is opened, or about a refusal that is correct whether the
+ * server exists or not. Live SQL is covered by test-integration.mjs.
  *
  * Harness packages are imported from the runtime directory because this file
  * lives in the plugin workspace, while the harness runtime lives in the dsh
@@ -10,15 +15,24 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { skip } from './tests-support.mjs'
 
 // The harness's own @deepseek-ai module directory; override with
 // DSH_RUNTIME_MODULES when your install path differs.
 const RUNTIME = process.env.DSH_RUNTIME_MODULES
   ?? 'file:///D:/Program%20Files/nodejs/node_global/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
 
-const { Context } = await import(`${RUNTIME}/cordis/lib/index.js`)
-const { default: SystemPrompt, renderPrompt } = await import(`${RUNTIME}/dsh-system-prompt/lib/index.js`)
-const { default: ToolRuntime } = await import(`${RUNTIME}/dsh-tools/lib/index.js`)
+const importHarness = async name => {
+  try {
+    return await import(`${RUNTIME}/${name}/lib/index.js`)
+  } catch (error) {
+    skip(`cannot import ${name} from ${RUNTIME} (${error.message}); set DSH_RUNTIME_MODULES to the harness's @deepseek-ai directory to run this suite`)
+  }
+}
+
+const { Context } = await importHarness('cordis')
+const { default: SystemPrompt, renderPrompt } = await importHarness('dsh-system-prompt')
+const { default: ToolRuntime } = await importHarness('dsh-tools')
 
 let failures = 0
 const check = (label, ok, detail = '') => {
@@ -44,17 +58,21 @@ await new Promise(resolve => setTimeout(resolve, 400))
 const mod = await import(new URL('./index.js', import.meta.url))
 check('plugin name', mod.name === 'dsh-db-connections')
 
-// A reachable MySQL is needed for the tool checks below; DB_TEST_* selects it
-// (default 127.0.0.1, root, empty password, `test`).
+// Names and addresses are only configuration values here: nothing connects.
 const HOST = process.env.DB_TEST_HOST ?? '127.0.0.1'
+const PORT = Number(process.env.DB_TEST_PORT ?? 3306)
 const USER = process.env.DB_TEST_USER ?? 'root'
 const PASSWORD = process.env.DB_TEST_PASSWORD ?? ''
 const DATABASE = process.env.DB_TEST_DATABASE ?? 'test'
 const fiber = ctx.plugin(mod, {
-  connections: [{
-    name: '128', host: HOST, port: 3306, user: USER,
-    password: PASSWORD, database: DATABASE, description: 'test database',
-  }],
+  connections: [
+    { name: '128', host: HOST, port: PORT, user: USER, password: PASSWORD, database: DATABASE, description: 'test database' },
+    // A classify-only engine, so the read-only policy can be exercised without
+    // a server: Doris has no read-only transaction for the server to enforce.
+    { name: 'dw', driver: 'doris', host: HOST, port: 9030, user: USER, password: PASSWORD },
+    // A per-machine environment must not remove the connection from the list.
+    { name: 'env', host: HOST, port: PORT, user: USER, passwordEnv: 'DBC_LOADER_NOT_SET' },
+  ],
 })
 await new Promise(resolve => setTimeout(resolve, 400))
 
@@ -67,6 +85,10 @@ check('prompt section present', promptText.includes('Database connections'))
 check('prompt names the connection', promptText.includes('`128`'))
 check('prompt never carries the password', !promptText.includes('change-me'))
 check('prompt states read-only when no connection is writable', promptText.includes('No connection here allows writes'))
+check('prompt reports the engine of each connection', promptText.includes('MySQL') && promptText.includes('Doris'))
+check('prompt never carries an address', !promptText.includes(`${HOST}:${PORT}`))
+check('prompt names an unusable connection with its reason',
+  promptText.includes('`env`') && promptText.includes('DBC_LOADER_NOT_SET'), promptText.slice(-400))
 check('three db tools registered', assembly.tools.filter(t => t.name.startsWith('db_')).length === 3)
 
 const run = async (name, args) => ctx.tools.execute({
@@ -77,17 +99,30 @@ const run = async (name, args) => ctx.tools.execute({
 })
 const textOf = result => result.content.map(block => block.text ?? '').join('\n')
 
-const select = await run('db_query', { connection: '128', sql: "SELECT 1 AS id, 'admin' AS username" })
-console.log('\n=== db_query SELECT ===')
-console.log(textOf(select))
-check('SELECT succeeds', select.isError !== true)
-check('SELECT returns rows', textOf(select).includes('admin'))
-
+// ── the read-only policy, decided before any socket is opened ───────────────
 const drop = await run('db_query', { connection: '128', sql: 'DROP TABLE _dsh_no_such_table' })
-check('client-side write refusal', drop.isError === true && /read-only statements only/.test(textOf(drop)), textOf(drop))
+check('a write through db_query is refused', drop.isError === true && /read-only statements only/.test(textOf(drop)), textOf(drop))
 
-const cte = await run('db_query', { connection: '128', sql: 'WITH c AS (SELECT id FROM _dsh_no_such_table LIMIT 1) UPDATE _dsh_no_such_table SET id=id WHERE id IN (SELECT id FROM c)' })
-check('server-side write refusal (CTE bypass)', cte.isError === true && /server-enforced read-only/.test(textOf(cte)), textOf(cte))
+const control = await run('db_query', { connection: '128', sql: 'SET SESSION autocommit = 0' })
+check('a session statement is refused', control.isError === true && /session or administrative/.test(textOf(control)), textOf(control))
+
+const cteOnServerBacked = await run('db_query', { connection: '128', sql: 'WITH c AS (SELECT 1 AS id) SELECT * FROM c' })
+check('an unclassifiable statement is admitted where the server can enforce read-only',
+  textOf(cteOnServerBacked).includes('could not be classified') === false, textOf(cteOnServerBacked).slice(0, 140))
+
+const cteOnClassifyOnly = await run('db_query', { connection: 'dw', sql: 'WITH c AS (SELECT 1 AS id) DELETE FROM c' })
+check('an unclassifiable statement is refused where the server cannot',
+  cteOnClassifyOnly.isError === true && /could not be classified/.test(textOf(cteOnClassifyOnly)), textOf(cteOnClassifyOnly))
+
+const readOnClassifyOnly = await run('db_query', { connection: 'dw', sql: 'SELECT 1' })
+check('a provable read is admitted on a classify-only engine',
+  textOf(readOnClassifyOnly).includes('could not be classified') === false, textOf(readOnClassifyOnly).slice(0, 140))
+
+const unusable = await run('db_query', { connection: 'env', sql: 'SELECT 1' })
+check('an unusable connection explains itself', unusable.isError === true && /not usable here/.test(textOf(unusable)), textOf(unusable))
+
+const multi = await run('db_query', { connection: '128', sql: 'SELECT 1; SELECT 2' })
+check('two statements in one call are refused', multi.isError === true && /one statement per call/.test(textOf(multi)), textOf(multi))
 
 // --- live swap: change connections through the plugin's OWN API route ---
 //
@@ -121,15 +156,18 @@ const server = http.createServer((req, res) => { void captured.handler(req, res)
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}`
 
-const before = await run('db_query', { connection: '128', sql: 'SELECT 1' })
-check('original connection works before the save', before.isError !== true)
+const read = await (await fetch(`${base}/api/db-connections`)).json()
+check('the route reports the revision', typeof read.revision === 'string' && read.revision.length > 0)
+check('the route reports the driver catalog', Array.isArray(read.drivers) && read.drivers.length === 4)
+check('the route never returns the configured password', JSON.stringify(read).includes(PASSWORD) === false || PASSWORD === '')
 
 const saved = await fetch(`${base}/api/db-connections`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', origin: base },
   body: JSON.stringify({
+    revision: read.revision,
     connections: [
-      { name: '128', host: HOST, port: 3306, user: USER, password: PASSWORD, database: DATABASE },
+      { name: '128', host: HOST, port: PORT, user: USER, database: DATABASE, passwordEnv: '' },
       { name: 'local', host: '127.0.0.1', port: 3306, user: 'root', password: 'x' },
     ],
   }),
@@ -145,6 +183,8 @@ check('save reached the profile file', store.load().length === 2)
 const after = await ctx.systemPrompt.assemble({})
 check('prompt now names both connections',
   renderPrompt(after).includes('`local`') && renderPrompt(after).includes('`128`'))
+check('the saved prompt keeps the engine of a hand-written entry',
+  renderPrompt(after).includes('MySQL'))
 
 const live = await run('db_query', { connection: 'local', sql: 'SELECT 1' })
 // The point is that the freshly saved name resolved and reached the network path
@@ -160,7 +200,6 @@ const gone = await run('db_query', { connection: 'nosuch', sql: 'SELECT 1' })
 check('unconfigured name still refused', gone.isError === true && /no database connection is named/.test(textOf(gone)))
 server.close()
 
-console.log('\nAll checks above ran against the live MySQL server.')
 await fiber.dispose()
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
 process.exit(failures === 0 ? 0 : 1)
