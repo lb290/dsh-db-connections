@@ -119,7 +119,7 @@ Name an environment variable with `passwordEnv`; it is resolved at load, and a m
         passwordEnv: PROD_DB_PASSWORD
 ```
 
-When both are present, `passwordEnv` wins. **A settings-page save does not destroy this**: the page edits raw configuration, so a resolved password is never written back to the file.
+When both are present, `passwordEnv` wins. **A settings-page save does not destroy this**: the page edits raw configuration, so a resolved password is never written back to the file. Note the other direction: the settings page has no `passwordEnv` field of its own — creating the indirection is a hand edit of the configuration file.
 
 ### Write access
 

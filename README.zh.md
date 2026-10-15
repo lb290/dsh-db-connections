@@ -119,7 +119,7 @@ profile 的 `cordis.patch.yml` 位置：
         passwordEnv: PROD_DB_PASSWORD
 ```
 
-`password` 和 `passwordEnv` 同时写时以 `passwordEnv` 为准。**在设置页里保存不会破坏这种写法**——页面编辑的是原始配置，解出来的密码不会被写回文件。
+`password` 和 `passwordEnv` 同时写时以 `passwordEnv` 为准。**在设置页里保存不会破坏这种写法**——页面编辑的是原始配置，解出来的密码不会被写回文件。反方向也一样：设置页本身没有 `passwordEnv` 输入框，想用它只能手动编辑配置文件。
 
 ### 写权限
 
