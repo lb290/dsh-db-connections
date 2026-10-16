@@ -206,8 +206,17 @@ check('newly saved name is addressable without a restart',
 
 const gone = await run('db_query', { connection: 'nosuch', sql: 'SELECT 1' })
 check('unconfigured name still refused', gone.isError === true && /no database connection is named/.test(textOf(gone)))
-server.close()
+// Await the close before disposing and exiting. `server.close()` alone returns
+// immediately while the listener is still tearing down, and exiting on top of
+// that races libuv: on Windows the process then dies with
+// `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` after every check has
+// already passed, which reads as a plugin defect instead of a teardown race.
+await new Promise(resolve => { server.close(resolve) })
 
 await fiber.dispose()
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
-process.exit(failures === 0 ? 0 : 1)
+// Set the code and let the loop drain instead of calling process.exit(). On
+// Windows, exiting while the global fetch dispatcher still owns handles kills
+// the process with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`
+// after every check has passed, so a passing suite reports a failing exit code.
+process.exitCode = failures === 0 ? 0 : 1

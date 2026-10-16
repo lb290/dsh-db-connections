@@ -143,6 +143,7 @@ npm test
 - [ ] **SSH 隧道 / 堡垒机选项**：生产库常在内网。落点：`src/config.js` 加 `ssh` 字段，driver 建池前起隧道。
 - [ ] **会话级只读以省掉每条读 2 次 RTT**：⚠️ 现在的写法（每条语句开一个只读事务）更安全，还顺手挡住了 CTE 绕过；只有跨 WAN/高延迟才值得换，且**必须同时把 `unknown` 全部拒绝**，否则 `SET SESSION TRANSACTION READ WRITE` 能毒化会话。
 - [ ] **`test-write` 支持其他引擎**：现在只测 MySQL（建表/删表的 SQL 是 MySQL 方言）。可以按 `DB_TEST_DRIVER` 参数化，或各引擎单独一个套件。
+- [ ] **Windows 上的配置文件权限**：`src/store.js` 的 `FILE_MODE = 0o600`（`src/store.js` 里的常量）只在 POSIX 上有意义——Windows 没有 mode 位，`fs.chmod` 只切只读属性，`statSync` 一律报 `0o666`。也就是说「配置文件仅属主可读」这条保证在 Windows 上并不成立，README 的措辞需要限定，或改成用 ACL 收权。当前处理：`test-store` 在该平台上不断言这一条，并打印一行说明。
 
 ---
 
@@ -160,3 +161,23 @@ npm test
 2. **不要把任何 token / 凭据写进文件**（包括 `.git/config` 里的 remote URL）；推送用一次性 URL 或系统的凭据管理器。
 3. **不要把镜像源地址写进 `package-lock.json`**（提交前 `grep -c npmmirror package-lock.json` 应为 0）。
 4. 不要 force push `main`；这个分支上随便改。
+
+---
+
+## 6. Windows 机器上的一轮续做（记录）
+
+在一台 Windows 机器上按第 0 节开工，`npm test` 初始是 **10/14**；四个失败**全部只在该平台出现**，作者在 macOS 上不会遇到。已全部处理：
+
+| 失败 | 根因 | 处理 |
+| --- | --- | --- |
+| `test-integration` | `requireMysql` 只探 TCP 可达。该机装着 MySQL80 服务，端口应答但默认凭据被拒，于是「缺前置条件」被当成断言失败从套件深处抛出 | `tests-support.mjs`：改为真正认证连接并确认目标库存在，任一不满足按原因 SKIP |
+| `test-write` | 同上 | 同上 |
+| `test-loader` | 所有断言通过之后，`process.exit()` 在 fetch 调度器仍持有句柄时强制退出，Windows libuv 崩在 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`——一个全绿的套件报出失败退出码 | `test-loader.mjs`：最终退出改为 `process.exitCode`，让事件循环自然排空 |
+| `test-store` | 断言 POSIX `0600`，而 Windows 没有 mode 位 | `test-store.mjs`：该平台不断言并打印说明；缺口见第 3 节 |
+
+另外修掉一个**产品缺陷**（不是测试问题）：`src/audit.js` 的 `record()` 用即发即忘的 `fs.appendFile` 并发追加，两条相邻记录谁先落盘不确定（抽测 8 次出现过一次顺序反转）。审计流水的顺序正是事后排查的依据，故改为**串行链式追加**。修复后 `test-audit` 由「6 次里 5 次失败」变为 **8/8 通过**。
+
+修复后全量：**12/14 通过、2 SKIP、0 失败**，与第 0 节的预期一致。
+
+本机环境（供下次判断）：Windows + Node 24.19.0；`127.0.0.1:3306` 有一个本机 MySQL 8.0.40，但**没有 `test` 库**，默认凭据也不可用——第 1 节的 MySQL 验收需要先给出一个可用库（`DB_TEST_DATABASE`）与可用凭据。Doris / PostgreSQL / TDengine 本机无服务，**均未验收**。
+

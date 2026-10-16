@@ -61,7 +61,15 @@ check('other rows survive a save', afterText.includes('ui-chat') && afterText.in
 check('comments survive a save', afterText.includes('keep me'), afterText.includes('keep me') ? '' : 'comment lost')
 check('header comment survives', afterText.includes('Your patch layer'))
 check('annotation survives', afterText.includes('@deepseek-ai/dsh-client-ui-chat'))
-check('the patch file is owner-only after a save', (fs.statSync(file).mode & 0o777) === 0o600, (fs.statSync(file).mode & 0o777).toString(8))
+// Windows has no POSIX mode bits: fs.chmod there only toggles the read-only
+// attribute, and statSync reports 0o666 whatever was requested, so this
+// assertion cannot hold on that platform. The owner-only guarantee is a POSIX
+// one; the Windows gap is recorded in TODO.md rather than asserted away.
+if (process.platform === 'win32') {
+  console.log('      (owner-only file mode is a POSIX guarantee; not asserted on Windows)')
+} else {
+  check('the patch file is owner-only after a save', (fs.statSync(file).mode & 0o777) === 0o600, (fs.statSync(file).mode & 0o777).toString(8))
+}
 
 const reloaded = store.load()
 check('two connections after save', reloaded.length === 2, `got ${reloaded.length}`)
