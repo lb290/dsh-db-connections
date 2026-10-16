@@ -95,6 +95,25 @@ export function parseResponse(text, connection) {
  * @param {object} payload - the parsed answer.
  * @returns {{ columns: string[], rows: unknown[][] }} the raw result.
  */
+/**
+ * Pick the DDL out of a `SHOW CREATE TABLE` answer.
+ *
+ * TDengine 3.3 answers with two columns -- `Table` and `Create Table` -- so the
+ * statement is not the first cell, and reading the first returned the table's
+ * own name as if it were the DDL. The column is located by name because a server
+ * that adds a leading column would move it again; when no name matches, the last
+ * column is the best remaining guess.
+ * @param {string[]} columns - the answer's column names.
+ * @param {unknown[][]} rows - the answer's rows.
+ * @returns {string} the DDL, or an empty string when the answer carried none.
+ */
+export function ddlFromCreateTable(columns, rows) {
+  if (rows.length === 0) return ''
+  const named = columns.findIndex(column => /create\s+table/iu.test(String(column)))
+  const index = named === -1 ? columns.length - 1 : named
+  return index < 0 ? '' : String(rows[0][index] ?? '')
+}
+
 export function mapResult(payload) {
   const columns = Array.isArray(payload.column_meta)
     ? payload.column_meta.map(meta => String(Array.isArray(meta) ? meta[0] : meta))
@@ -383,9 +402,7 @@ export function createTdengineDriver(connection) {
         try {
           const created = await send(`SHOW CREATE TABLE ${quoteQualified(database, target.table, info.id)}`, { signal })
           const createdResult = mapResult(created)
-          // TDengine answers `SHOW CREATE TABLE` with a single `create table`
-          // column holding the statement.
-          ddl = createdResult.rows.length === 0 ? '' : String(createdResult.rows[0][0] ?? '')
+          ddl = ddlFromCreateTable(createdResult.columns, createdResult.rows)
         } catch (error) {
           notices.push(`SHOW CREATE TABLE was not available for this object (${asError(error).message})`)
         }

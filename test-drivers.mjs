@@ -7,7 +7,7 @@ import { DRIVER_CATALOG, createDriver, driverChoices, driverInfo } from './src/d
 import { DRIVER_INFO as MYSQL_INFO, mapColumns as mysqlColumns, mapIndexes as mysqlIndexes, mapTables as mysqlTables } from './src/drivers/mysql.js'
 import { composeDdl, mapColumns as pgColumns, mapIndexes as pgIndexes, mapTables as pgTables } from './src/drivers/postgres.js'
 import {
-  affectedRowsOf, mapDescribe, mapResult, mapTableList, parseResponse, timeSeriesNotice,
+  affectedRowsOf, ddlFromCreateTable, mapDescribe, mapResult, mapTableList, parseResponse, timeSeriesNotice,
 } from './src/drivers/tdengine.js'
 import { assertSingleStatement, classify, leadingKeyword, quoteIdent, quoteQualified, statementCount } from './src/sql.js'
 
@@ -157,6 +157,19 @@ const stables = mapTableList(['stable_name', 'create_time'], [['meters', 'x']], 
 check('SHOW STABLES maps to STABLE rows', stables[0].type === 'STABLE' && stables[0].name === 'meters', JSON.stringify(stables[0]))
 const childTables = mapTableList(['table_name', 'create_time', 'stable_name'], [['d1001', 'x', 'meters']], 'TABLE')
 check('SHOW TABLES keeps the parent super table as the comment', childTables[0].comment === 'meters' && childTables[0].type === 'TABLE', JSON.stringify(childTables[0]))
+
+// Measured against TDengine 3.3.5.2: `SHOW CREATE TABLE` answers with the two
+// columns `Table` and `Create Table`, so the statement is not the first cell.
+// Reading the first returned the table's own name as if it were the DDL.
+const realCreateAnswer = ddlFromCreateTable(['Table', 'Create Table'], [['meters', 'CREATE TABLE `meters` (ts TIMESTAMP)']])
+check('SHOW CREATE TABLE takes the statement, not the table name',
+  realCreateAnswer === 'CREATE TABLE `meters` (ts TIMESTAMP)', realCreateAnswer)
+check('SHOW CREATE TABLE finds the column after one the server adds later',
+  ddlFromCreateTable(['#', 'Table', 'Create Table'], [['1', 'meters', 'CREATE TABLE `t`']]) === 'CREATE TABLE `t`')
+check('SHOW CREATE TABLE falls back to the last column when no name matches',
+  ddlFromCreateTable(['a', 'b'], [[1, 'DDL']]) === 'DDL')
+check('an empty SHOW CREATE TABLE answer yields no DDL', ddlFromCreateTable(['Table', 'Create Table'], []) === '')
+check('a null DDL cell yields an empty string', ddlFromCreateTable(['Table', 'Create Table'], [['meters', null]]) === '')
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
 process.exit(failures === 0 ? 0 : 1)

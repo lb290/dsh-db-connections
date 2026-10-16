@@ -78,6 +78,8 @@ $env:DSH_PROFILE_BASE = "file:///" + ($p -replace '\\','/') + "/"
 
 ## 1. 必做验收：真库
 
+> 进度：**MySQL ✅ · PostgreSQL ✅ · TDengine ✅ · Doris ⬜ 仍待做**（本机、128、152 三处 9030 端口均不通，没有 Doris 服务可用）。
+
 ```powershell
 $env:DB_TEST_HOST="127.0.0.1"; $env:DB_TEST_PORT="3306"
 $env:DB_TEST_USER="root"; $env:DB_TEST_PASSWORD="<密码>"; $env:DB_TEST_DATABASE="test"
@@ -97,20 +99,18 @@ npm test
       1. `SHOW INDEX FROM \`db\`.\`t\`` 是否可用。不可用时**应该是**给一条 notice（"index information is not available on this engine…"）而不是整个 `db_schema` 报错。
       2. `SET query_timeout = <秒>` 是否被接受（Doris 的单位是秒，MySQL 是毫秒，代码已按引擎区分）。
       3. 在一个 Doris 连接上跑 `WITH c AS (SELECT 1) SELECT * FROM c`：**应当被拒绝**并提示"could not be classified"（Doris 没有服务端只读事务，所以分类就是闸门）。
-- [ ] **PostgreSQL 12+**：新增 `driver: postgres` 连接 → 测试 → `db_schema` 三级。
-      重点确认：
-      1. `db_query` 里跑 `CREATE TABLE x(id int)` → 应被服务端以 SQLSTATE `25006` 拒绝，插件翻译成"writes, and db_query runs reads only"。
-      2. `db_schema` 返回的 DDL 是从系统目录拼的（有 notice 说明），字段/默认值/主键/索引定义是否合理。
-      3. 时间类型列（`date`/`timestamp`/`timestamptz`）是否按**服务端原文**返回，而不是被转成本地时区的 JS 时间字符串。
-      4. `database` 参数按 schema 理解是否符合预期（`public` 等）。
-- [ ] **TDengine**：新增 `driver: tdengine` 连接（默认端口 6041，走 taosAdapter；`database` 填库名）→ 测试 → `db_schema` 三级 → 一条带时间范围的 `SELECT`。
-      重点确认（这几处我是按官方文档写的，没连过库）：
-      1. `DESCRIBE \`db\`.\`t\`` 的返回列名是否为 `field` / `type` / `length` / `note`。
-      2. `SHOW CREATE TABLE \`db\`.\`t\`` 的返回列是否为单个 `create table` 列（我取 `rows[0][0]`）。
-      3. `SHOW TABLES` 的返回里是否有 `stable_name` 列（有的话会作为子表的 comment 显示父超级表名）。
-      4. 一条**不带** `ts` 范围也没有 `INTERVAL` 的 `SELECT`，是否附带"可能扫全表"的 notice。
-      5. `SELECT server_version()` 是否存在；不存在时测试按钮应仍显示"连接成功"、版本显示 `unknown`，而不是判定连接失败。
-      6. 写操作（`INSERT`）返回的 `affected_rows` 是否被正确读成 `affectedRows`。
+- [x] **PostgreSQL** ✅ 2026-10-16 完成（`192.168.1.152:5432`，**17.6**，库 `hccloud_postgres`）。四条逐一验证：
+      1. `CREATE TABLE` 走 `db_query`：**没有**走到服务端 SQLSTATE `25006`——插件的分类器先拦下了（"db_query runs read-only statements only"）。服务端那道闸门只有分类器不认识的写语句才碰得到；不可分类的**读**（`WITH ... SELECT`）在服务端只读事务里正常放行（已验证返回 `[[1]]`）。
+      2. DDL 拼装 ✅：三级返回 18 列 + `CREATE TABLE "public"."geofence" ("id" bigint NOT NULL, …)`，并附 notice 说明这是从系统目录拼的、可能与原始语句文本不同。
+      3. 时间类型 ✅：`now()` / `now()::timestamp` / `current_date` 均按**服务端原文**返回（`2026-10-16 03:28:51.096817+00`），没有被转成本地时区或 JS `Date`。
+      4. `database` 参数按 schema 理解**符合预期，但踩到一个坑并已修**：连接配置里的 `database` 是**库名**（用于连接），而 `db_schema` 把它当 **schema 名**用，于是设成库名时静默返回 **0 张表**（该库 `public` 里实有 13 张表）。已改为未给 schema 时取服务端 `current_schema()`，不再回退到连接的库名。
+- [x] **TDengine** ✅ 2026-10-16 完成（`192.168.1.152:6041`，**3.3.5.2**，库 `hccloud_iot`：2339 张表 = 2310 子表 + 29 超级表）。六条逐一验证：
+      1. `DESCRIBE` ✅ 返回 `field` / `type` / `length` / `note`（另有 `encode` / `compress` / `level`），映射为 `TIMESTAMP(8)`、`NCHAR(50)` 这类带长度的类型。
+      2. `SHOW CREATE TABLE` ❌ **假设不成立，且是真 bug**：实际是两列 `["Table", "Create Table"]`，`rows[0][0]` 是**表名**，所以 `ddl` 字段一直返回表名。已改为按列名定位（无匹配则取最后一列），并补了 5 条纯函数回归测试。
+      3. `SHOW TABLES` ❌ **没有** `stable_name` 列（只有 `table_name`），「comment 显示父超级表名」在当前服务端拿不到数据；不过修复后的 `ddl` 会输出 `USING \`父表\``，父表信息照样可见。该 notice 的措辞偏乐观，待收敛。
+      4. 无 `ts` 范围也无 `INTERVAL` ✅ 会附带"可能扫全表"的 notice，带范围时不附。
+      5. `SELECT server_version()` ✅ **存在**，返回 `3.3.5.2`，因此 `unknown` 回退分支未被覆盖到。
+      6. ⚠️ **未做**：`INSERT` 的 `affected_rows` 需要在真库建表写入，`hccloud_iot` 是业务库，未获许可前不动。
 
 ---
 
@@ -185,5 +185,20 @@ npm test
 
 修复后全量：**12/14 通过、2 SKIP、0 失败**，与第 0 节的预期一致。
 
-本机环境（供下次判断）：Windows + Node 24.19.0；`127.0.0.1:3306` 有一个本机 MySQL 8.0.40，但**没有 `test` 库**，默认凭据也不可用——第 1 节的 MySQL 验收需要先给出一个可用库（`DB_TEST_DATABASE`）与可用凭据。Doris / PostgreSQL / TDengine 本机无服务，**均未验收**。
+本机环境（供下次判断）：Windows + Node 24.19.0；`127.0.0.1:3306` 有一个本机 MySQL 8.0.40（**业务库，无 `test` 库**，默认凭据不可用）。验收用的真库来自内网：**MySQL 8.0.46 @ 192.168.1.128**（已建专用 `test` 库）、**PostgreSQL 17.6 @ 192.168.1.152:5432**、**TDengine 3.3.5.2 @ 192.168.1.152:6041**。凭据不入库，跑验收时用环境变量传。
+
+### 6.1 PostgreSQL / TDengine 真库验收抓到的两个驱动 bug（已修）
+
+两处都只有连上真库才会暴露，纯单测和 mock 都看不见：
+
+1. **TDengine `SHOW CREATE TABLE` 取错列**（`src/drivers/tdengine.js`）：注释按「单列 `create table`」写，取 `rows[0][0]`；实测 3.3.5.2 返回两列 `["Table", "Create Table"]`，于是 `db_schema` 的 `ddl` 字段一直把**表名**当 DDL 返回。抽取纯函数 `ddlFromCreateTable()` 按列名定位（无匹配取最后一列），并补 5 条回归测试。
+2. **PostgreSQL 把库名当 schema 名**（`src/drivers/postgres.js`）：`schema()` 原本 `target.database ?? connection.database`，而连接配置里的 `database` 是**库名**。设成库名时 `WHERE n.nspname = $1` 匹配不到任何 schema，`db_schema` 静默返回 **0 张表**——看起来像「这个库是空的」，而不是「问错了问题」。改为未给 schema 时查服务端 `current_schema()`。验证：修前 0 张，修后 **13 张**（与 `pg_class` 直接 count 一致），三级能拼出 `CREATE TABLE "public"."geofence" (…)`。
+
+### 6.2 仍未闭合的项
+
+- **Doris**：无处可验。§2 里 Doris 的 4 条假设（`SET query_timeout` 单位、`information_schema` 三表可用性、`SHOW CREATE TABLE` 第二列、不发事务）全部还是「照文档写」。
+- **TDengine `stable_name`**：当前服务端 `SHOW TABLES` 只有 `table_name` 一列，子表 comment 拿不到父超级表名；notice 的措辞需要改成如实描述，或改从 `information_schema.ins_tables` 取。
+- **TDengine 扫描 notice 的时间列名**：判据写死 `ts`；实测该库的时间列叫 `time`，带范围查询按 `ts` 判会误报 notice。需要按实际主键时间列判断。
+- **TDengine 写路径**：`INSERT` 的 `affected_rows` 未在真库验证（要在业务库里建表）。
+- **PostgreSQL 服务端只读闸门**：分类器能拦下的写（如 `CREATE TABLE`）到不了服务端，所以 SQLSTATE `25006` 的翻译文案仍未被真库覆盖；要覆盖需一条分类器不认识、但服务端能解析的写语句。
 

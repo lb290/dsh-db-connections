@@ -387,15 +387,22 @@ export function createPostgresDriver(connection) {
      * @returns {Promise<object>} the schema report without the connection name.
      */
     async schema(target, { signal }) {
-      const database = target.database ?? connection.database
-      if (target.table !== undefined && database === undefined) {
-        throw new Error(`inspecting table ${JSON.stringify(target.table)} needs a schema: pass database, or set a default database for connection ${JSON.stringify(connection.name)}`)
-      }
+      // On PostgreSQL `connection.database` names the database to connect to; the
+      // schema is a separate axis, named by this call's own `database` argument.
+      // Defaulting the schema to the connection's database asked the catalog for
+      // a schema bearing the database's own name, which lists nothing -- and
+      // reads as an empty database rather than as the wrong question. With no
+      // schema given, the server's current schema is the answer.
+      const requested = target.database
       try {
         return await withConnection(signal, async client => {
           const run = async (sql, params) => {
             const result = await client.query({ text: sql, values: params })
             return result.rows ?? []
+          }
+          const database = requested ?? (await run('SELECT current_schema() AS name', []))[0]?.name
+          if (target.table !== undefined && database === undefined) {
+            throw new Error(`inspecting table ${JSON.stringify(target.table)} needs a schema: pass database, or set a default database for connection ${JSON.stringify(connection.name)}`)
           }
 
           if (target.table !== undefined) {
