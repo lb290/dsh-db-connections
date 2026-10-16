@@ -78,7 +78,7 @@ $env:DSH_PROFILE_BASE = "file:///" + ($p -replace '\\','/') + "/"
 
 ## 1. 必做验收：真库
 
-> 进度：**MySQL ✅ · PostgreSQL ✅ · TDengine ✅ · Doris ⬜ 仍待做**（本机、128、152 三处 9030 端口均不通，没有 Doris 服务可用）。
+> 进度：**MySQL ✅ · PostgreSQL ✅ · TDengine ✅ · Doris ✅ —— §1 四个引擎全部真库验收完成（2026-10-16）**。
 
 ```powershell
 $env:DB_TEST_HOST="127.0.0.1"; $env:DB_TEST_PORT="3306"
@@ -94,11 +94,12 @@ npm test
       4. `test-write` 断言审计 **5** 条，而实际到达服务端的写是 **7** 条（漏算了主键冲突那条失败记录）；且 `waitFor(>= 5)` 会在最后两条 append 仍在队列时就满足，读的是一个还在增长的文件。
       另注：被插件自身策略拒绝的写**不进**审计（它从未到达驱动），这是有意的。
       `test-write` 会自己建 `_dsh_rw_probe` 表、跑完自己删，并断言审计日志不含密码。
-- [ ] **Doris**：新增一个 `driver: doris` 连接（默认端口 9030）→ 测试 → `db_schema` 三级 → 一条 `SELECT`。
-      重点确认三件事：
-      1. `SHOW INDEX FROM \`db\`.\`t\`` 是否可用。不可用时**应该是**给一条 notice（"index information is not available on this engine…"）而不是整个 `db_schema` 报错。
-      2. `SET query_timeout = <秒>` 是否被接受（Doris 的单位是秒，MySQL 是毫秒，代码已按引擎区分）。
-      3. 在一个 Doris 连接上跑 `WITH c AS (SELECT 1) SELECT * FROM c`：**应当被拒绝**并提示"could not be classified"（Doris 没有服务端只读事务，所以分类就是闸门）。
+- [x] **Doris** ✅ 2026-10-16 完成（`192.168.1.130:9031`，协议版本报 `5.7.99`，Doris 走 MySQL 5.7 协议属正常；14 个库，验收目标 `backup_p13_cpms_3_0_base` 48 张表）。三条逐一验证：
+      1. `SHOW INDEX` ✅ **可用**：经 `db_query` 返回标准 13 列（`Table`/`Non_unique`/`Key_name`/…），本表无索引行故为空结果；`db_schema` 全程未报错、`indexes: []`、无 notice——「降级成 notice」的兜底分支未被触发（这是好事，说明不需要它）。
+      2. `SET query_timeout = 30` ✅ 被接受，且 `SHOW VARIABLES LIKE 'query_timeout'` 回读到 `Value=30, Default_Value=900, Changed=1`——**单位是秒、驱动按引擎区分的处理是对的**。
+      3. `WITH c AS (…) SELECT * FROM c` ✅ **被拒绝**，报错正是设计文案："Doris cannot enforce read-only access on the server… This statement could not be classified"——分类器闸门如设计工作。
+      外加 `db_schema` 三级全通：48 张表带中文注释、列映射含 `key: 'UNI'`、DDL 拼装正确（`AUTO_INCREMENT(1)` 是 Doris 自己的语法）。
+      附注：列上标 `UNI` 但 `SHOW INDEX` 返回空行，是 Doris 服务端口径不一致，不是插件问题。
 - [x] **PostgreSQL** ✅ 2026-10-16 完成（`192.168.1.152:5432`，**17.6**，库 `hccloud_postgres`）。四条逐一验证：
       1. `CREATE TABLE` 走 `db_query`：**没有**走到服务端 SQLSTATE `25006`——插件的分类器先拦下了（"db_query runs read-only statements only"）。服务端那道闸门只有分类器不认识的写语句才碰得到；不可分类的**读**（`WITH ... SELECT`）在服务端只读事务里正常放行（已验证返回 `[[1]]`）。
       2. DDL 拼装 ✅：三级返回 18 列 + `CREATE TABLE "public"."geofence" ("id" bigint NOT NULL, …)`，并附 notice 说明这是从系统目录拼的、可能与原始语句文本不同。
@@ -134,6 +135,8 @@ npm test
 | TDengine | 写操作返回 `column_meta[0][0] === 'affected_rows'` | `affectedRowsOf()` |
 | TDengine | `SHOW DATABASES` 首列（或名为 `name` 的列）是库名 | `schema()` 的 databases 分支 |
 | TDengine | Generic Basic 认证（`root:taosdata` base64）够用 | `request()` 里的 `authorization` |
+
+> 2026-10-16 真库验收结果：Doris 4 条、TDengine 6 条、PostgreSQL 4 条均已按上表逐条核对（细节记在 §1 各引擎条目下）。**不成立并已修**的有两条：TDengine `SHOW CREATE TABLE` 实为两列（§6.1）、PostgreSQL 把连接的库名当 schema 名（§6.1）；其余全部成立。
 
 ---
 
@@ -196,7 +199,7 @@ npm test
 
 ### 6.2 仍未闭合的项
 
-- **Doris**：无处可验。§2 里 Doris 的 4 条假设（`SET query_timeout` 单位、`information_schema` 三表可用性、`SHOW CREATE TABLE` 第二列、不发事务）全部还是「照文档写」。
+- ~~**Doris**~~ ✅ 已于 2026-10-16 在 `192.168.1.130:9031` 上验收（见 §1）：`SHOW INDEX` 可用、`query_timeout` 单位为秒、CTE 被分类器拒绝，四条假设全部成立，无缺陷。
 - **TDengine `stable_name`**：当前服务端 `SHOW TABLES` 只有 `table_name` 一列，子表 comment 拿不到父超级表名；notice 的措辞需要改成如实描述，或改从 `information_schema.ins_tables` 取。
 - **TDengine 扫描 notice 的时间列名**：判据写死 `ts`；实测该库的时间列叫 `time`，带范围查询按 `ts` 判会误报 notice。需要按实际主键时间列判断。
 - **TDengine 写路径**：`INSERT` 的 `affected_rows` 未在真库验证（要在业务库里建表）。
