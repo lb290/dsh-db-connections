@@ -69,6 +69,18 @@ export function createAuditLog(settings) {
   }
 
   /**
+   * Appends are serialized through this chain.
+   *
+   * `fs.appendFile` is asynchronous and unordered: two records written back to
+   * back reach the file in whichever order the pool finishes them, so the trail
+   * can read as if a later statement came first. For an audit log that is not a
+   * cosmetic problem — the file is what a later investigation reads the order
+   * of events from. Each append therefore starts only after the previous one has
+   * settled.
+   */
+  let pending = Promise.resolve()
+
+  /**
    * Append one record.
    * @param {object} entry - the facts to record.
    */
@@ -82,7 +94,10 @@ export function createAuditLog(settings) {
     })}\n`
     // A failed append must never break the tool call it describes: the caller is
     // told the statement's own outcome, and the audit gap is the lesser problem.
-    fs.appendFile(settings.path, line, () => {})
+    // That is also why the chain settles either way rather than rejecting.
+    pending = pending.then(() => new Promise(resolve => {
+      fs.appendFile(settings.path, line, () => { resolve() })
+    }))
   }
 
   return { record, file: settings.path }
