@@ -58,12 +58,18 @@ check('db_schema lists tables', tables.level === 'tables' && Array.isArray(table
 // 3. read query
 const read = await call('query', { connection: '128', sql: 'SELECT 1 AS one, \'two\' AS two' })
 show('db_query (SELECT)', defs.query.output.render({}, read))
-check('db_query returns rows', read.rows.length === 1 && read.rows[0][0] === 1, JSON.stringify(read.rows))
+// Exact-numeric columns stay strings on the way to the model (see the driver's
+// header), so a literal 1 arrives as "1". What matters here is the row and its
+// contents, not the JavaScript type that carries them.
+check('db_query returns rows', read.rows.length === 1 && String(read.rows[0][0]) === '1' && read.rows[0][1] === 'two', JSON.stringify(read.rows))
 check('db_query reports column names', read.columns[0] === 'one', JSON.stringify(read.columns))
 
 // 4. formats render from the same canonical value
 const csv = defs.query.output.render({ format: 'csv' }, read)[0].text
-check('csv format renders a header and one row', csv.split('\n').length === 3, csv.replaceAll('\n', ' | '))
+const csvLines = csv.split('\n')
+check('csv format renders a header and one row',
+  csvLines[0] === 'one,two' && csvLines[1] === '1,two' && /1 row in \d+ ms/u.test(csv),
+  csv.replaceAll('\n', ' | '))
 check('json format renders the canonical value', JSON.parse(defs.query.output.render({ format: 'json' }, read)[0].text).rows.length === 1)
 
 // 5. read-only enforcement: a write through db_query must be refused
@@ -77,7 +83,15 @@ const refusal = async (label, which, args, pattern) => {
 }
 
 await refusal('db_query write', 'query', { connection: '128', sql: 'CREATE TABLE _dsh_ro_probe (id INT)' }, /read-only statements only/)
-await refusal('CTE-led write', 'query', { connection: '128', sql: 'WITH c AS (SELECT 1 AS id) DELETE FROM c' }, /writes|read-only/)
+// `WITH` is deliberately absent from the classifier's read vocabulary, because a
+// CTE can front a write. On a server-enforced engine that means the statement is
+// admitted on purpose and the read-only transaction is the gate -- the
+// classify-only engines (Doris, TDengine) refuse it outright instead. MySQL 8
+// stops this particular form in its own parser, because DELETE cannot target a
+// CTE, so the read-only error never gets its turn; that is why the pattern also
+// accepts the server's wording. What this check proves is that the statement did
+// not run, whichever layer stopped it.
+await refusal('CTE-led write', 'query', { connection: '128', sql: 'WITH c AS (SELECT 1 AS id) DELETE FROM c' }, /writes|read-only|not updatable/)
 await refusal('db_execute on read-only', 'execute', { connection: '128', sql: 'SELECT 1' }, /is read-only/)
 await refusal('unknown connection', 'query', { connection: 'nope', sql: 'SELECT 1' }, /no database connection is named/)
 await refusal('missing sql argument', 'query', { connection: '128' }, /sql is required/)

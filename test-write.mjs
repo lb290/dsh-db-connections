@@ -102,10 +102,21 @@ try {
   }
 
   // 9. The audit trail recorded the writes and none of the credential.
-  check('the audit trail reached five records', await waitFor(() => auditLines().length >= 5, { label: 'the audit file to hold 5 records' }))
+  // Seven statements reach the server before this point and every one of them is
+  // recorded: the leftover-guard DROP, CREATE, INSERT, UPDATE, DELETE, the INSERT
+  // into a missing table, and the duplicate-key INSERT. A refusal raised by the
+  // plugin's own policy never reaches the driver, so the two refused writes above
+  // are correctly absent from the trail.
+  //
+  // Waiting for the exact count is the point. The old `>= 5` was already true
+  // while the last two appends were still queued, so the suite read a growing
+  // file and counted whatever had landed -- a race, not a check.
+  const EXPECTED_AUDIT_RECORDS = 7
+  check('the audit trail recorded every write',
+    await waitFor(() => auditLines().length >= EXPECTED_AUDIT_RECORDS, { label: `the audit file to hold ${EXPECTED_AUDIT_RECORDS} records` }))
   const auditText = fs.existsSync(auditFile) ? fs.readFileSync(auditFile, 'utf8') : ''
   const records = auditLines().map(line => JSON.parse(line))
-  check('the audit trail has one record per write', records.length === 5, String(records.length))
+  check('the audit trail has one record per write', records.length === EXPECTED_AUDIT_RECORDS, String(records.length))
   check('an audit record names the connection and the driver', records[0]?.connection === 'rw' && records[0]?.driver === 'mysql', JSON.stringify(records[0] ?? {}))
   check('a successful write is recorded as ok with its row count', records.some(record => record.ok === true && record.affectedRows === 2))
   check('a failed statement is recorded too', records.some(record => record.ok === false && /Duplicate entry|does not exist/.test(record.error ?? '')))

@@ -76,7 +76,7 @@ $env:DSH_PROFILE_BASE = "file:///" + ($p -replace '\\','/') + "/"
 
 ---
 
-## 1. 必做验收：真库（本机无数据库，全部待做）
+## 1. 必做验收：真库
 
 ```powershell
 $env:DB_TEST_HOST="127.0.0.1"; $env:DB_TEST_PORT="3306"
@@ -84,8 +84,14 @@ $env:DB_TEST_USER="root"; $env:DB_TEST_PASSWORD="<密码>"; $env:DB_TEST_DATABAS
 npm test
 ```
 
-- [ ] **MySQL**：`test-integration` 与 `test-write` 由 SKIP 转为 PASS。
-      `test-write` 会自己建 `_dsh_rw_probe` 表、跑完自己删，并断言审计日志写了 5 条记录、且不含密码。
+- [x] **MySQL** ✅ 2026-10-16 完成。在 `192.168.1.128` 上新建 `test` 库作为验收目标（服务端 8.0.46-0ubuntu0.24.04.4），`test-integration` 与 `test-write` 均由 SKIP 转为 **PASS**；全量 **14/14、0 SKIP**，连跑三次一致。
+      首次真库运行暴露了四处「从未跑过真库」的错误期望（原因与处理见第 6 节的历史记录）：
+      1. 断言 `SELECT 1` 返回数字 `1`——驱动**刻意**让精确数值列保持字符串（`src/drivers/mysql.js` 头注释：不替上游发明精度）。
+      2. 断言 `csv` 恰好 3 行——渲染器在 body 与摘要之间本就有空行，实为 4 行。
+      3. 断言 CTE 前置的写在 MySQL 上由**插件**拒绝——设计上 `WITH` 不在只读词表内，服务端强制只读的引擎就是放行并交给服务端拦；Doris/TDengine 才由分类器拒绝，且已有 `test-drivers` / `test-registry` / `test-loader` 覆盖。
+      4. `test-write` 断言审计 **5** 条，而实际到达服务端的写是 **7** 条（漏算了主键冲突那条失败记录）；且 `waitFor(>= 5)` 会在最后两条 append 仍在队列时就满足，读的是一个还在增长的文件。
+      另注：被插件自身策略拒绝的写**不进**审计（它从未到达驱动），这是有意的。
+      `test-write` 会自己建 `_dsh_rw_probe` 表、跑完自己删，并断言审计日志不含密码。
 - [ ] **Doris**：新增一个 `driver: doris` 连接（默认端口 9030）→ 测试 → `db_schema` 三级 → 一条 `SELECT`。
       重点确认三件事：
       1. `SHOW INDEX FROM \`db\`.\`t\`` 是否可用。不可用时**应该是**给一条 notice（"index information is not available on this engine…"）而不是整个 `db_schema` 报错。
