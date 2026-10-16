@@ -81,7 +81,14 @@ function renderQueryResult(value, options) {
       lines.push(`Note: the rendered result exceeded maxResultChars (${options.maxChars}) and was cut. Add a LIMIT, narrow the WHERE clause, select fewer columns, ask for format "csv", or raise maxResultChars for this connection.`)
     }
   }
-  lines.push(`${value.totalRows} row${value.totalRows === 1 ? '' : 's'} in ${value.elapsedMs} ms`)
+  // A format named `json` has to stay parseable: the row-count line that makes
+  // the table and csv layouts readable would leave this one as JSON followed by
+  // prose, which no parser accepts. The count is implied by the array length, so
+  // only `json` goes without the summary. Notices still follow, because they
+  // report something the body cannot show.
+  if ((options.format ?? 'table') !== 'json') {
+    lines.push(`${value.totalRows} row${value.totalRows === 1 ? '' : 's'} in ${value.elapsedMs} ms`)
+  }
   for (const notice of value.notices) lines.push(`Note: ${notice}`)
   return textResult(lines.join('\n\n'))
 }
