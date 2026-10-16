@@ -62,23 +62,50 @@ export function reachable(host, port, timeoutMs = 1500) {
 }
 
 /**
- * Require a reachable MySQL for the suites that drive real SQL.
+ * Require a MySQL this machine can actually use, for the suites that drive real
+ * SQL.
+ *
+ * Reachability alone is not enough. A machine commonly has an unrelated MySQL on
+ * the port — a Windows service, another project's container — that accepts a TCP
+ * connection and is none of our business. Treating that as a usable target turns
+ * a missing prerequisite into an authentication error thrown from deep inside
+ * the suite, which reads as a defect in the plugin. Authenticate, and confirm the
+ * target database exists, before the suite starts.
  * @param {NodeJS.ProcessEnv} [env] - environment to read the connection from.
  * @returns {Promise<{ host: string, port: number, user: string, password: string, database: string }>} the target.
  */
 export async function requireMysql(env = process.env) {
   const host = env.DB_TEST_HOST ?? '127.0.0.1'
   const port = Number(env.DB_TEST_PORT ?? 3306)
+  const user = env.DB_TEST_USER ?? 'root'
+  const password = env.DB_TEST_PASSWORD ?? ''
+  const database = env.DB_TEST_DATABASE ?? 'test'
   if (await reachable(host, port) === false) {
     skip(`no MySQL at ${host}:${port}; start one and set DB_TEST_HOST/DB_TEST_PORT/DB_TEST_USER/DB_TEST_PASSWORD/DB_TEST_DATABASE to run this suite`)
   }
-  return {
-    host,
-    port,
-    user: env.DB_TEST_USER ?? 'root',
-    password: env.DB_TEST_PASSWORD ?? '',
-    database: env.DB_TEST_DATABASE ?? 'test',
+  const { default: mysql } = await import('mysql2/promise')
+  let connection
+  try {
+    connection = await mysql.createConnection({ host, port, user, password, connectTimeout: 5000 })
+  } catch (error) {
+    const code = error?.code ?? ''
+    if (code === 'ER_ACCESS_DENIED_ERROR' || code === 'ER_NOT_SUPPORTED_AUTH_MODE') {
+      skip(`MySQL at ${host}:${port} refused user "${user}" (${code}); set DB_TEST_USER and DB_TEST_PASSWORD to a database this machine may use`)
+    }
+    skip(`cannot open MySQL at ${host}:${port} (${code === '' ? error.message : code})`)
   }
+  let exists = false
+  try {
+    const [rows] = await connection.query(
+      'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [database])
+    exists = rows.length > 0
+  } finally {
+    await connection.end()
+  }
+  if (exists === false) {
+    skip(`MySQL at ${host}:${port} has no database "${database}"; set DB_TEST_DATABASE to one that exists`)
+  }
+  return { host, port, user, password, database }
 }
 
 /**
