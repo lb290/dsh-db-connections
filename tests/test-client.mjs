@@ -55,7 +55,7 @@ const React = {
   useRef: value => ({ current: value }),
 }
 
-const source = fs.readFileSync(new URL('./client.js', import.meta.url), 'utf8')
+const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 // The bundle is a plain script that calls the global loader; evaluate it as one.
 new Function('window', 'document', 'require', source)(globalThis.window, globalThis.document, spec => {
   if (spec === 'react') return React
@@ -76,7 +76,7 @@ check('declares the slots injection', Array.isArray(exports.inject) && exports.i
 // Every service apply() dereferences must be declared in `inject`, or the
 // framework hands it an undefined property, apply() throws, and the section
 // silently never registers — the page just disappears from Settings.
-const bundleText = fs.readFileSync(new URL('./client.js', import.meta.url), 'utf8')
+const bundleText = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 const applyBody = bundleText.slice(bundleText.indexOf('function apply(ctx)'), bundleText.indexOf('exports.apply = apply'))
 const usedServices = [...new Set([...applyBody.matchAll(/ctx\.([a-zA-Z]+)/g)].map(m => m[1]))]
   .filter(name => name !== 'effect')

@@ -7,10 +7,10 @@
  * database. What a real server adds is its own protocol behaviour, which the
  * driver suites and `test-integration.mjs` cover.
  */
-import { resolveConnections } from './src/config.js'
-import { LiveConnections } from './src/live.js'
-import { assertSingleStatement, classify } from './src/sql.js'
-import { executeTool, queryTool, schemaTool } from './src/tools.js'
+import { resolveConnections } from '../src/config.js'
+import { LiveConnections } from '../src/live.js'
+import { assertSingleStatement, classify } from '../src/sql.js'
+import { executeTool, queryTool, schemaTool } from '../src/tools.js'
 
 let failures = 0
 const check = (label, ok, detail = '') => {

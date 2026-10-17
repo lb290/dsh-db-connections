@@ -20,10 +20,11 @@
     "icon.svg",
     "README.md",
     "README.zh.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "tests/"
   ],
   "scripts": {
-    "test": "node run-tests.mjs"
+    "test": "node tests/run-tests.mjs"
   },
   "keywords": [
     "dsh",

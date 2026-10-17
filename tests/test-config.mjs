@@ -11,7 +11,7 @@ const { Context } = await import(`${RUNTIME}/cordis/lib/index.js`)
 const { default: SystemPrompt, renderPrompt } = await import(`${RUNTIME}/dsh-system-prompt/lib/index.js`)
 const { default: ToolRuntime } = await import(`${RUNTIME}/dsh-tools/lib/index.js`)
 const { waitFor } = await import('./tests-support.mjs')
-const mod = await import(new URL('./index.js', import.meta.url))
+const mod = await import(new URL('../index.js', import.meta.url))
 
 let failures = 0
 const check = (label, ok, detail = '') => {
@@ -55,7 +55,7 @@ try {
 // A `passwordEnv` this machine does not set is a fact about the machine, not a
 // defect in the file. Throwing here would fail the whole plugin load, which also
 // removes the settings page that is the only place to see and fix it.
-const { resolveConnections } = await import('./src/config.js')
+const { resolveConnections } = await import('../src/config.js')
 const degraded = resolveConnections({ connections: [
   { name: 'ok', host: 'h', user: 'u' },
   { name: 'missing', host: 'h', user: 'u', passwordEnv: 'DBC_TEST_NOT_SET' },

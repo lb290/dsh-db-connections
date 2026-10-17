@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createAuditLog, resolveAudit } from './src/audit.js'
+import { createAuditLog, resolveAudit } from '../src/audit.js'
 import { waitFor } from './tests-support.mjs'
 
 let failures = 0

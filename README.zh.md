@@ -241,20 +241,20 @@ npm test                  # 跑下面全部套件，每个一行结论
 需要本机缺东西的套件（数据库、harness 运行时、装好的 profile）会打印 `SKIP` 和原因，而不是判失败。
 
 ```sh
-node test-drivers.mjs     # 语句分类、单语句约束、标识符引用、各驱动的映射函数
-node test-registry.mjs    # 行数上限、单元格转换、输出格式、只读策略、审计挂钩（用替身驱动）
-node test-settings.mjs    # 脱敏与密码在页面/存储之间的继承
-node test-store.mjs       # 配置文件读写、修订号冲突、文件权限、设置接口
-node test-audit.mjs       # 审计开关、记录结构、语句长度上限
-node test-config.mjs      # 配置校验 + 加载/卸载生命周期
-node test-client.mjs      # 浏览器半身：槽位注册、inject 声明、保存载荷、校验
-node test-render.mjs      # 设置页真实渲染：选择器、保存、测试、增删
-node test-meta.mjs        # 插件列表的显示名/描述本地化（语言文件 + 导出映射）
-node test-plugin-meta.mjs # 调用 harness 自己的 readPluginMeta 验证显示元数据
-node test-profile.mjs     # 包清单 + 用 harness 自己的扫描逻辑确认设置页会被加载
-node test-loader.mjs      # 用真实 SystemPrompt/ToolRuntime 服务加载插件，并验证保存后立即生效
-node test-integration.mjs # 真实 MySQL：三个工具、schema、输出格式、全部拒绝路径
-node test-write.mjs       # 真实 MySQL：读写模式 + 审计日志（自己建表、自己删表）
+node tests/test-drivers.mjs     # 语句分类、单语句约束、标识符引用、各驱动的映射函数
+node tests/test-registry.mjs    # 行数上限、单元格转换、输出格式、只读策略、审计挂钩（用替身驱动）
+node tests/test-settings.mjs    # 脱敏与密码在页面/存储之间的继承
+node tests/test-store.mjs       # 配置文件读写、修订号冲突、文件权限、设置接口
+node tests/test-audit.mjs       # 审计开关、记录结构、语句长度上限
+node tests/test-config.mjs      # 配置校验 + 加载/卸载生命周期
+node tests/test-client.mjs      # 浏览器半身：槽位注册、inject 声明、保存载荷、校验
+node tests/test-render.mjs      # 设置页真实渲染：选择器、保存、测试、增删
+node tests/test-meta.mjs        # 插件列表的显示名/描述本地化（语言文件 + 导出映射）
+node tests/test-plugin-meta.mjs # 调用 harness 自己的 readPluginMeta 验证显示元数据
+node tests/test-profile.mjs     # 包清单 + 用 harness 自己的扫描逻辑确认设置页会被加载
+node tests/test-loader.mjs      # 用真实 SystemPrompt/ToolRuntime 服务加载插件，并验证保存后立即生效
+node tests/test-integration.mjs # 真实 MySQL：三个工具、schema、输出格式、全部拒绝路径
+node tests/test-write.mjs       # 真实 MySQL：读写模式 + 审计日志（自己建表、自己删表）
 ```
 
 需要额外环境变量的套件：

@@ -12,10 +12,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createAuditLog } from './src/audit.js'
-import { resolveConnections } from './src/config.js'
-import { LiveConnections } from './src/live.js'
-import { executeTool, queryTool } from './src/tools.js'
+import { createAuditLog } from '../src/audit.js'
+import { resolveConnections } from '../src/config.js'
+import { LiveConnections } from '../src/live.js'
+import { executeTool, queryTool } from '../src/tools.js'
 import { requireMysql, waitFor } from './tests-support.mjs'
 
 let failures = 0

@@ -7,12 +7,12 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { createApiHandler } from './src/api.js'
-import { resolveConnections } from './src/config.js'
-import { driverChoices } from './src/drivers/index.js'
-import { LiveConnections } from './src/live.js'
-import { mergePasswords } from './src/settings.js'
-import { ConnectionStore, ROW_ID, StoreConflictError, revisionOf } from './src/store.js'
+import { createApiHandler } from '../src/api.js'
+import { resolveConnections } from '../src/config.js'
+import { driverChoices } from '../src/drivers/index.js'
+import { LiveConnections } from '../src/live.js'
+import { mergePasswords } from '../src/settings.js'
+import { ConnectionStore, ROW_ID, StoreConflictError, revisionOf } from '../src/store.js'
 
 let failures = 0
 const check = (label, ok, detail = '') => {

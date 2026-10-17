@@ -1,7 +1,7 @@
 /**
  * Package and client-discovery checks for the desktop profile.
  *
- * A client plugin must declare BOTH `dsh.client` and `exports["./client"]`.
+ * A client plugin must declare BOTH `dsh.client` and `exports["../client"]`.
  * Missing the export makes the harness throw at startup — breaking the whole app,
  * not merely hiding this plugin — so this file runs the harness's own
  * `ClientModuleRegistry.resolveMeta`, the code that decides whether a package's
@@ -26,7 +26,7 @@ const check = (label, ok, detail = '') => {
   if (!ok) failures += 1
 }
 
-const pkgPath = fileURLToPath(new URL('./package.json', import.meta.url))
+const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url))
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
 const dir = path.dirname(pkgPath)
 

@@ -6,10 +6,10 @@
  * DB_TEST_DATABASE at a MySQL you own; the defaults target 127.0.0.1:3306 with
  * user root and no password. Without a reachable server the suite reports SKIP.
  */
-import { resolveConnections } from './src/config.js'
-import { LiveConnections } from './src/live.js'
-import { renderConnections } from './src/prompt.js'
-import { executeTool, queryTool, schemaTool } from './src/tools.js'
+import { resolveConnections } from '../src/config.js'
+import { LiveConnections } from '../src/live.js'
+import { renderConnections } from '../src/prompt.js'
+import { executeTool, queryTool, schemaTool } from '../src/tools.js'
 import { requireMysql } from './tests-support.mjs'
 
 let failures = 0

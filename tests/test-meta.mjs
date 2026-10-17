@@ -20,30 +20,30 @@ const check = (label, ok, detail = '') => {
 }
 
 const dir = path.dirname(fileURLToPath(import.meta.url))
-const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
+const pkg = JSON.parse(fs.readFileSync(path.join(dir, '..', 'package.json'), 'utf8'))
 
 // The English dictionary is found through the export map, so this export is what
 // makes localization work at all.
 check('exports the locale directory', pkg.exports?.['./locale/*.json'] === './locale/*.json',
   JSON.stringify(pkg.exports?.['./locale/*.json']))
-check('ships the locale directory', fs.existsSync(path.join(dir, 'locale')))
+check('ships the locale directory', fs.existsSync(path.join(dir, '..', 'locale')))
 
 // The harness only looks for en.json by name; zh.json is discovered as a sibling.
-check('locale/en.json exists', fs.existsSync(path.join(dir, 'locale/en.json')))
-check('locale/zh.json exists', fs.existsSync(path.join(dir, 'locale/zh.json')))
+check('locale/en.json exists', fs.existsSync(path.join(dir, '..', 'locale/en.json')))
+check('locale/zh.json exists', fs.existsSync(path.join(dir, '..', 'locale/zh.json')))
 
 // A filename that is not a bare language id throws and loses ALL metadata.
 const LANGUAGE_ID = /^[a-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/u
-for (const name of fs.readdirSync(path.join(dir, 'locale'))) {
+for (const name of fs.readdirSync(path.join(dir, '..', 'locale'))) {
   check(`locale/${name} is a language id`, name.endsWith('.json') && LANGUAGE_ID.test(name.slice(0, -5)),
     name)
 }
 
 // Every dictionary must carry a `meta` object with title and description.
 const dictionaries = {}
-for (const name of fs.readdirSync(path.join(dir, 'locale'))) {
+for (const name of fs.readdirSync(path.join(dir, '..', 'locale'))) {
   const language = name.slice(0, -5).toLowerCase()
-  const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'locale', name), 'utf8'))
+  const parsed = JSON.parse(fs.readFileSync(path.join(dir, '..', 'locale', name), 'utf8'))
   dictionaries[language] = parsed.meta
   check(`locale/${name} carries meta.title`, typeof parsed.meta?.title === 'string' && parsed.meta.title.length > 0)
   check(`locale/${name} carries meta.description`,
@@ -65,7 +65,7 @@ check('the zh description is localized', /[\u4e00-\u9fff]/u.test(dictionaries.zh
 // --- resolve exactly the way the harness does, through the export map ---
 // Self-reference resolution: resolving this package's own name from inside it
 // exercises the same export map the harness reads the locale files through.
-const require = createRequire(path.join(dir, 'package.json'))
+const require = createRequire(path.join(dir, '..', 'package.json'))
 let englishPath
 try {
   englishPath = require.resolve('dsh-db-connections/locale/en.json')
@@ -77,7 +77,7 @@ try {
 
 // Every sibling must resolve too, and land in the English dictionary's directory.
 const englishDir = path.dirname(englishPath)
-for (const name of fs.readdirSync(path.join(dir, 'locale'))) {
+for (const name of fs.readdirSync(path.join(dir, '..', 'locale'))) {
   let resolved
   try {
     resolved = require.resolve(`dsh-db-connections/locale/${name}`)

@@ -62,7 +62,7 @@ await waitFor(() => {
   }
 }, { label: 'the systemPrompt service' })
 
-const mod = await import(new URL('./index.js', import.meta.url))
+const mod = await import(new URL('../index.js', import.meta.url))
 check('plugin name', mod.name === 'dsh-db-connections')
 
 // Names and addresses are only configuration values here: nothing connects.
@@ -182,7 +182,7 @@ const saved = await fetch(`${base}/api/db-connections`, {
 })
 check('settings save accepted', saved.status === 200, JSON.stringify(await saved.clone().json()).slice(0, 120))
 
-const { ConnectionStore } = await import(new URL('./src/store.js', import.meta.url))
+const { ConnectionStore } = await import(new URL('../src/store.js', import.meta.url))
 const store = new ConnectionStore()
 check('store points at the scratch profile', store.file.startsWith(profileDir))
 check('save reached the profile file', store.load().length === 2)

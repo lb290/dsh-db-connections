@@ -2,8 +2,8 @@
  * Settings-projection tests: the two rules that keep a credential out of the
  * settings page's response while still letting the page leave one alone.
  */
-import { mergePasswords, redactConnections } from './src/settings.js'
-import { resolveConnections } from './src/config.js'
+import { mergePasswords, redactConnections } from '../src/settings.js'
+import { resolveConnections } from '../src/config.js'
 
 let failures = 0
 const check = (label, ok, detail = '') => {

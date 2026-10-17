@@ -156,7 +156,7 @@ const React = {
   useRef: initial => harness.hooks.useRef(initial),
 }
 
-const source = fs.readFileSync(new URL('./client.js', import.meta.url), 'utf8')
+const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 new Function('window', 'document', 'require', source)(globalThis.window, globalThis.document, spec => {
   if (spec === 'react') return React
   throw new Error(`unexpected require(${spec})`)

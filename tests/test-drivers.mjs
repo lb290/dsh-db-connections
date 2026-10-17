@@ -3,13 +3,13 @@
  * per dialect, identifier quoting, and every pure mapping each driver uses to
  * turn a driver answer into the schema report. No database is needed.
  */
-import { DRIVER_CATALOG, createDriver, driverChoices, driverInfo } from './src/drivers/index.js'
-import { DRIVER_INFO as MYSQL_INFO, mapColumns as mysqlColumns, mapIndexes as mysqlIndexes, mapTables as mysqlTables } from './src/drivers/mysql.js'
-import { composeDdl, mapColumns as pgColumns, mapIndexes as pgIndexes, mapTables as pgTables } from './src/drivers/postgres.js'
+import { DRIVER_CATALOG, createDriver, driverChoices, driverInfo } from '../src/drivers/index.js'
+import { DRIVER_INFO as MYSQL_INFO, mapColumns as mysqlColumns, mapIndexes as mysqlIndexes, mapTables as mysqlTables } from '../src/drivers/mysql.js'
+import { composeDdl, mapColumns as pgColumns, mapIndexes as pgIndexes, mapTables as pgTables } from '../src/drivers/postgres.js'
 import {
   affectedRowsOf, ddlFromCreateTable, mapDescribe, mapResult, mapTableList, parseResponse, timeSeriesNotice,
-} from './src/drivers/tdengine.js'
-import { assertSingleStatement, classify, leadingKeyword, quoteIdent, quoteQualified, statementCount } from './src/sql.js'
+} from '../src/drivers/tdengine.js'
+import { assertSingleStatement, classify, leadingKeyword, quoteIdent, quoteQualified, statementCount } from '../src/sql.js'
 
 let failures = 0
 const check = (label, ok, detail = '') => {

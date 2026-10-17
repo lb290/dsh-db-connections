@@ -241,20 +241,20 @@ npm test                 # every suite below, one summary line each
 A suite that needs something this machine lacks — a database, a harness runtime, an installed profile — prints `SKIP` with the reason instead of failing.
 
 ```sh
-node test-drivers.mjs     # classification, single-statement enforcement, quoting, every driver mapping
-node test-registry.mjs    # row caps, cell conversion, formats, the read policy, and the audit hook (stub engine)
-node test-settings.mjs    # redaction and password inheritance between the page and the store
-node test-store.mjs       # configuration file read/write, revision conflicts, file mode, settings API
-node test-audit.mjs       # the audit setting, record shape, statement bound
-node test-config.mjs      # config validation + load/dispose lifecycle
-node test-client.mjs      # browser half: slot registration, inject declarations, save payload
-node test-render.mjs      # renders the settings page: pickers, save, test, add/remove (no browser)
-node test-meta.mjs        # plugin-list display name/description localization (locale files + export map)
-node test-plugin-meta.mjs # calls the harness's own readPluginMeta to verify display metadata
-node test-profile.mjs     # package manifest + the harness's own scan deciding the page loads
-node test-loader.mjs      # loads through the real SystemPrompt/ToolRuntime services, then saves live
-node test-integration.mjs # real MySQL: tools, schema, formats, and every refusal path
-node test-write.mjs       # real MySQL: read-write mode and the audit trail (creates and drops its own table)
+node tests/test-drivers.mjs     # classification, single-statement enforcement, quoting, every driver mapping
+node tests/test-registry.mjs    # row caps, cell conversion, formats, the read policy, and the audit hook (stub engine)
+node tests/test-settings.mjs    # redaction and password inheritance between the page and the store
+node tests/test-store.mjs       # configuration file read/write, revision conflicts, file mode, settings API
+node tests/test-audit.mjs       # the audit setting, record shape, statement bound
+node tests/test-config.mjs      # config validation + load/dispose lifecycle
+node tests/test-client.mjs      # browser half: slot registration, inject declarations, save payload
+node tests/test-render.mjs      # renders the settings page: pickers, save, test, add/remove (no browser)
+node tests/test-meta.mjs        # plugin-list display name/description localization (locale files + export map)
+node tests/test-plugin-meta.mjs # calls the harness's own readPluginMeta to verify display metadata
+node tests/test-profile.mjs     # package manifest + the harness's own scan deciding the page loads
+node tests/test-loader.mjs      # loads through the real SystemPrompt/ToolRuntime services, then saves live
+node tests/test-integration.mjs # real MySQL: tools, schema, formats, and every refusal path
+node tests/test-write.mjs       # real MySQL: read-write mode and the audit trail (creates and drops its own table)
 ```
 
 Environment for the suites that need more than Node:
